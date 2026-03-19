@@ -2,61 +2,137 @@
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
-    <title>Sunnyside Protocol - Master Control</title>
+    <title>Sunnyside Protocol - Admin Panel</title>
+    <!-- Leaflet CSS voor de kaart -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
+    <!-- Firebase Scripts -->
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
+    
     <style>
-        #map { height: 100vh; width: 100%; background: #111; }
-        body { margin: 0; padding: 0; background: #000; color: white; font-family: sans-serif; }
-        #controls { position: absolute; top: 10px; right: 10px; z-index: 1000; background: rgba(0,0,0,0.8); padding: 15px; border: 1px solid #39ff14; }
-        button { background: #39ff14; color: black; border: none; padding: 10px; cursor: pointer; font-weight: bold; }
+        body { margin: 0; padding: 0; background: #000; color: #39ff14; font-family: 'Courier New', monospace; overflow: hidden; }
+        #map { height: 100vh; width: 100%; background: #111; z-index: 1; }
+        
+        #controls { 
+            position: absolute; top: 10px; right: 10px; z-index: 1000; 
+            background: rgba(0,0,0,0.85); padding: 20px; border: 2px solid #39ff14; 
+            box-shadow: 0 0 15px #39ff14; width: 250px;
+        }
+        
+        h2 { font-size: 1.2rem; margin-top: 0; text-transform: uppercase; border-bottom: 1px solid #39ff14; padding-bottom: 5px; }
+        
+        .player-entry { margin-bottom: 10px; font-size: 0.9rem; }
+        .status-dead { color: #ff0000; text-decoration: line-through; }
+        .status-alive { color: #39ff14; }
+        .role-traitor { font-weight: bold; color: #ff00ff; }
+        
+        button { 
+            background: #39ff14; color: black; border: none; padding: 10px; 
+            width: 100%; cursor: pointer; font-weight: bold; margin-top: 10px;
+            text-transform: uppercase;
+        }
+        button:hover { background: #fff; }
+        button.reset { background: #ff0000; color: white; margin-top: 20px; }
+        
+        .legend { font-size: 0.8rem; margin-top: 15px; border-top: 1px solid #444; pt: 5px; }
     </style>
 </head>
 <body>
+
     <div id="controls">
-        <h3>Master Control</h3>
-        <button onclick="resetGame()">Reset Game</button>
-        <div id="stats"></div>
+        <h2>Admin Control</h2>
+        <div id="stats">Wachten op spelers...</div>
+        
+        <div class="legend">
+            <p><span style="color:blue">●</span> Speelgoedje (Toy)</p>
+            <p><span style="color:magenta">●</span> Verrader (Traitor)</p>
+            <p><span style="color:gray">●</span> Geëlimineerd</p>
+        </div>
+
+        <button class="reset" onclick="resetGame()">RESET GAME</button>
     </div>
+
     <div id="map"></div>
 
     <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
     <script>
-        const firebaseConfig = { /* PLAK HIER DEZELFDE CONFIG AS BOVEN */ };
+        // JOUW FIREBASE CONFIGURATIE
+        const firebaseConfig = {
+          apiKey: "AIzaSyAGvUwRjfQQ0QSh2S4n6mGf8k7sZlBggEs",
+          authDomain: "tradingpost-57b20.firebaseapp.com",
+          databaseURL: "https://tradingpost-57b20-default-rtdb.europe-west1.firebasedatabase.app",
+          projectId: "tradingpost-57b20",
+          storageBucket: "tradingpost-57b20.firebasestorage.app",
+          messagingSenderId: "358205969306",
+          appId: "1:358205969306:web:b0440ef5815a21d5fca023",
+          measurementId: "G-ERK90MPVWR"
+        };
+
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
 
-        const map = L.map('map').setView([52.3676, 4.9041], 18); // Default focus
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+        // Kaart instellen (Gecentreerd op Nederland als startpunt)
+        const map = L.map('map').setView([52.3, 5.0], 13);
+        
+        // Dark Mode kaart stijl (CartoDB Dark Matter)
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
 
         let markers = {};
 
-        // Sync spelers naar kaart
+        // Luister naar updates van spelers
         db.ref('players').on('value', snapshot => {
             const players = snapshot.val();
             const statsDiv = document.getElementById('stats');
             statsDiv.innerHTML = "";
 
+            if (!players) {
+                statsDiv.innerHTML = "Geen spelers verbonden.";
+                return;
+            }
+
             for (let id in players) {
                 const p = players[id];
-                const color = p.status === 'dead' ? 'gray' : (p.role === 'traitor' ? 'red' : 'blue');
                 
+                // Bepaal kleur op basis van status en rol
+                let markerColor = 'blue';
+                if (p.role === 'traitor') markerColor = 'magenta';
+                if (p.status === 'dead') markerColor = 'gray';
+
+                // Marker bijwerken of maken
                 if (markers[id]) {
                     markers[id].setLatLng([p.lat, p.lng]);
+                    // Update kleur als status is veranderd
+                    markers[id].setStyle({ color: markerColor, fillColor: markerColor });
                 } else {
-                    markers[id] = L.circleMarker([p.lat, p.lng], { color: color, radius: 10 }).addTo(map)
-                        .bindTooltip(p.name, { permanent: true, direction: 'top' });
+                    markers[id] = L.circleMarker([p.lat, p.lng], {
+                        color: markerColor,
+                        fillColor: markerColor,
+                        fillOpacity: 0.8,
+                        radius: 8
+                    }).addTo(map).bindTooltip(p.name, { permanent: true, direction: 'top', className: 'marker-label' });
+                    
+                    // Zoom de kaart naar de eerste speler die verschijnt
+                    map.setView([p.lat, p.lng], 18);
                 }
 
-                statsDiv.innerHTML += `<p>${p.name}: ${p.status} (${p.role})</p>`;
+                // Update de zijbalk
+                const statusClass = p.status === 'dead' ? 'status-dead' : 'status-alive';
+                const roleText = p.role === 'traitor' ? '<span class="role-traitor">[VERRADER]</span>' : '[TOY]';
+                statsDiv.innerHTML += `<div class="player-entry ${statusClass}">${p.name} ${roleText}</div>`;
             }
         });
 
         function resetGame() {
-            if(confirm("Alles resetten?")) {
+            if(confirm("Weet je zeker dat je alle spelers wilt verwijderen en het spel wilt resetten?")) {
                 db.ref('players').remove();
-                location.reload();
+                // Verwijder alle markers van de kaart
+                for (let id in markers) {
+                    map.removeLayer(markers[id]);
+                }
+                markers = {};
+                alert("Game gereset.");
             }
         }
     </script>
