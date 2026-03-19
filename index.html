@@ -3,68 +3,53 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Sunnyside Protocol</title>
+    <title>Sunnyside HUD</title>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
     <style>
-        body { background: #000; color: #39ff14; font-family: 'Courier New', monospace; margin: 0; overflow: hidden; transition: background 0.5s; }
+        body { background: #000; color: #39ff14; font-family: 'Courier New', monospace; margin: 0; text-align: center; }
         .hud { height: 100vh; display: flex; flex-direction: column; justify-content: space-between; padding: 20px; box-sizing: border-box; }
-        
-        /* Sabotage effecten */
-        .lights-out { filter: brightness(0.05); }
-        #gas-alert { display: none; background: red; color: white; padding: 10px; font-weight: bold; animation: blink 0.5s infinite; position: fixed; top: 0; width: 100%; z-index: 100; }
-        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0; } }
-
-        /* Knoppen */
-        .btn { border: none; padding: 20px; font-size: 1.2rem; font-weight: bold; border-radius: 10px; cursor: pointer; width: 100%; margin-top: 10px; font-family: 'Courier New'; }
-        .btn-kill { background: #ff00ff; color: white; box-shadow: 0 0 20px #ff00ff; display: none; }
-        .btn-sabo { background: #550000; color: #ff0000; border: 1px solid #ff0000; font-size: 0.9rem; }
-        .btn-task { background: #39ff14; color: black; display: none; }
-        
-        #traitor-menu { display: none; border-top: 1px solid #555; padding-top: 10px; }
-        .task-modal { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.95); z-index: 1000; flex-direction: column; justify-content: center; align-items: center; }
+        .lights-out { filter: brightness(0.03); }
+        .btn { border: none; padding: 25px; font-size: 1.2rem; font-weight: bold; border-radius: 10px; width: 100%; font-family: 'Courier New'; margin-top: 10px; }
+        #kill-btn { background: #ff00ff; color: white; display: none; box-shadow: 0 0 20px #ff00ff; }
+        #task-btn { background: #39ff14; color: black; display: none; }
+        .btn-sabo { background: #440000; color: red; border: 1px solid red; font-size: 0.8rem; }
+        #traitor-panel { display: none; border-top: 1px solid #444; padding-top: 10px; }
+        #gas-alert { display: none; background: red; color: white; padding: 10px; position: fixed; top: 0; width: 100%; z-index: 1000; }
     </style>
 </head>
 <body>
+    <div id="gas-alert">⚠️ TOXIC GAS DETECTED ⚠️</div>
 
-    <div id="gas-alert">⚠️ TOXIC GAS ACTIVE: GO TO REPAIR POINT ⚠️</div>
-
-    <div class="hud" id="main-hud">
-        <div id="header">
-            <h2 id="role-display">LOADING SYSTEM...</h2>
-            <div id="status-display">STATUS: CONNECTING</div>
+    <div class="hud">
+        <div>
+            <h1 id="role-display">CONNECTING...</h1>
+            <div id="status-display">Wachten op GPS...</div>
         </div>
 
-        <div id="action-area">
-            <button id="task-btn" class="btn btn-task" onclick="startTask()">START TAAK</button>
-            <button id="kill-btn" class="btn btn-kill">ELIMINEER TARGET</button>
+        <div>
+            <button id="task-btn" class="btn" onclick="startTask()">TAAK STARTEN</button>
+            <button id="kill-btn" class="btn">ELIMINEER DOELWIT</button>
         </div>
 
-        <div id="traitor-menu">
-            <p style="color:red; font-size: 0.7rem;">SABOTAGE PANEL</p>
-            <button class="btn btn-sabo" onclick="sendSabotage('lights')">SABOTAGE: LIGHTS</button>
-            <button class="btn btn-sabo" onclick="sendSabotage('gas')">SABOTAGE: GAS</button>
-            <button class="btn" style="background:#222; color:#777" onclick="sendSabotage('none')">FIX ALL</button>
+        <div id="traitor-panel">
+            <p style="color:red">SABOTAGE PANEL</p>
+            <button class="btn btn-sabo" onclick="sendSabotage('lights')">LIGHTS OUT</button>
+            <button class="btn btn-sabo" onclick="sendSabotage('gas')">GAS LEAK</button>
+            <button class="btn btn-sabo" style="color:white" onclick="sendSabotage('none')">FIX SYSTEM</button>
         </div>
-    </div>
-
-    <!-- Task Pop-up -->
-    <div id="task-modal" class="task-modal">
-        <h2 id="task-name">Taak</h2>
-        <div id="task-game"></div>
-        <button class="btn" style="background:gray" onclick="closeTask()">AFBREKEN</button>
     </div>
 
     <script>
         const firebaseConfig = {
-            apiKey: "AIzaSyAGvUwRjfQQ0QSh2S4n6mGf8k7sZlBggEs",
-            authDomain: "tradingpost-57b20.firebaseapp.com",
-            databaseURL: "https://tradingpost-57b20-default-rtdb.europe-west1.firebasedatabase.app",
-            projectId: "tradingpost-57b20",
-            storageBucket: "tradingpost-57b20.firebasestorage.app",
-            messagingSenderId: "358205969306",
-            appId: "1:358205969306:web:b0440ef5815a21d5fca023",
-            measurementId: "G-ERK90MPVWR"
+          apiKey: "AIzaSyAGvUwRjfQQ0QSh2S4n6mGf8k7sZlBggEs",
+          authDomain: "tradingpost-57b20.firebaseapp.com",
+          databaseURL: "https://tradingpost-57b20-default-rtdb.europe-west1.firebasedatabase.app",
+          projectId: "tradingpost-57b20",
+          storageBucket: "tradingpost-57b20.firebasestorage.app",
+          messagingSenderId: "358205969306",
+          appId: "1:358205969306:web:b0440ef5815a21d5fca023",
+          measurementId: "G-ERK90MPVWR"
         };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
@@ -72,18 +57,18 @@
         let myId = localStorage.getItem('playerName') || prompt("Wat is je naam?");
         localStorage.setItem('playerName', myId);
 
-        let myLat, myLng, myRole, myStatus;
-        let nearbyTaskId = null;
+        let myLat, myLng, myRole = 'toy', myStatus = 'alive';
 
-        // GPS Tracking
+        // GPS opstarten
         navigator.geolocation.watchPosition(pos => {
             myLat = pos.coords.latitude;
             myLng = pos.coords.longitude;
             db.ref('players/' + myId).update({
-                lat: myLat, lng: myLng, name: myId, last_seen: Date.now()
+                lat: myLat, lng: myLng, name: myId, last_seen: Date.now(), 
+                role: myRole, status: myStatus
             });
-            checkTriggers();
-        }, null, { enableHighAccuracy: true });
+            updateLogic();
+        }, err => alert("Zet je GPS aan!"), { enableHighAccuracy: true });
 
         function getDist(lat1, lon1, lat2, lon2) {
             const R = 6371e3;
@@ -93,100 +78,68 @@
             return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
         }
 
-        function checkTriggers() {
+        function updateLogic() {
             db.ref().once('value', snap => {
-                const data = snap.val();
-                if(!data) return;
-
-                // 1. Check Nabijheid van Taken
+                const data = snap.val() || {};
+                
+                // 1. Taken Check
                 const tasks = data.tasks || {};
-                nearbyTaskId = null;
+                let foundTask = null;
                 for(let tid in tasks) {
                     if(getDist(myLat, myLng, tasks[tid].lat, tasks[tid].lng) < 15) {
-                        nearbyTaskId = tid;
-                        document.getElementById('task-btn').innerText = "TAAK: " + tasks[tid].name;
-                        document.getElementById('task-btn').style.display = 'block';
+                        foundTask = tasks[tid].name;
                         break;
                     }
                 }
-                if(!nearbyTaskId) document.getElementById('task-btn').style.display = 'none';
+                const tb = document.getElementById('task-btn');
+                tb.style.display = foundTask ? 'block' : 'none';
+                if(foundTask) tb.innerText = "TAAK: " + foundTask;
 
-                // 2. Check Nabijheid van Slachtoffers (Alleen voor Verrader)
-                if(myRole === 'traitor' && myStatus !== 'dead') {
-                    let victimId = null;
+                // 2. Kill Check
+                if(myRole === 'traitor' && myStatus === 'alive') {
                     const players = data.players || {};
+                    let victim = null;
                     for(let pid in players) {
                         if(pid !== myId && players[pid].status === 'alive') {
                             if(getDist(myLat, myLng, players[pid].lat, players[pid].lng) < 10) {
-                                victimId = pid;
-                                break;
+                                victim = pid; break;
                             }
                         }
                     }
                     const kb = document.getElementById('kill-btn');
-                    if(victimId) {
-                        kb.style.display = 'block';
-                        kb.onclick = () => db.ref('players/' + victimId).update({status: 'dead'});
-                    } else {
-                        kb.style.display = 'none';
-                    }
+                    kb.style.display = victim ? 'block' : 'none';
+                    if(victim) kb.onclick = () => db.ref('players/' + victim).update({status: 'dead'});
                 }
             });
         }
 
-        // Sabotage versturen (Verrader functie)
         function sendSabotage(type) {
-            db.ref('game_settings/sabotage').set({
-                active: type !== 'none',
-                type: type,
-                timestamp: Date.now()
-            });
+            db.ref('game_settings/sabotage').set({ active: type !== 'none', type: type });
         }
 
-        // Luister naar rollen en sabotage
+        function startTask() {
+            alert("TAAK WORDT UITGEVOERD... (5 sec)");
+            setTimeout(() => alert("TAAK VOLTOOID!"), 5000);
+        }
+
+        // Luister naar de server
         db.ref().on('value', snap => {
-            const data = snap.val();
-            const me = data.players[myId];
+            const data = snap.val() || {};
+            const me = (data.players && data.players[myId]) ? data.players[myId] : null;
+            
             if(me) {
                 myRole = me.role || 'toy';
                 myStatus = me.status || 'alive';
-                
                 document.getElementById('role-display').innerText = myRole.toUpperCase();
                 document.getElementById('status-display').innerText = "STATUS: " + myStatus.toUpperCase();
-                document.getElementById('traitor-menu').style.display = (myRole === 'traitor') ? 'block' : 'none';
-                
-                if(myStatus === 'dead') {
-                    document.body.style.filter = "grayscale(1) brightness(0.5)";
-                }
+                document.getElementById('traitor-panel').style.display = (myRole === 'traitor') ? 'block' : 'none';
+                if(myStatus === 'dead') document.body.style.filter = "grayscale(1) brightness(0.4)";
             }
 
             const sabo = data.game_settings?.sabotage;
             document.body.classList.toggle('lights-out', sabo?.active && sabo?.type === 'lights' && myRole !== 'traitor');
             document.getElementById('gas-alert').style.display = (sabo?.active && sabo?.type === 'gas') ? 'block' : 'none';
         });
-
-        // Simpele Taak Game
-        function startTask() {
-            document.getElementById('task-modal').style.display = 'flex';
-            const games = [
-                {n: "Code Invoeren", g: "Typ 1234: <input id='t-in' type='number'><button onclick='checkT()'>OK</button>"},
-                {n: "Uploaden", g: "Wacht 5 sec... <div id='prog'>0%</div>"}
-            ];
-            const randomTask = games[Math.floor(Math.random() * games.length)];
-            document.getElementById('task-name').innerText = randomTask.n;
-            document.getElementById('task-game').innerHTML = randomTask.g;
-            
-            if(randomTask.n === "Uploaden") {
-                let p = 0;
-                let iv = setInterval(() => {
-                    p += 20;
-                    document.getElementById('prog').innerText = p + "%";
-                    if(p>=100) { clearInterval(iv); alert("KLAAR!"); closeTask(); }
-                }, 1000);
-            }
-        }
-        function checkT() { if(document.getElementById('t-in').value == "1234") { alert("GEFIXT!"); closeTask(); } }
-        function closeTask() { document.getElementById('task-modal').style.display = 'none'; }
     </script>
 </body>
 </html>
