@@ -8,24 +8,18 @@
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
     <style>
         body { background: #0a0a0a; color: #39ff14; font-family: 'Courier New', monospace; text-align: center; margin: 0; overflow: hidden; }
-        .hud-container { border: 2px solid #39ff14; margin: 20px; padding: 20px; box-shadow: 0 0 15px #39ff14; position: relative; height: 80vh; }
-        .scanline { width: 100%; height: 100%; background: linear-gradient(to bottom, rgba(255,255,255,0) 50%, rgba(0,0,0,.1) 50%), linear-gradient(90deg, rgba(255,0,0,.06), rgba(0,255,0,.02), rgba(0,0,255,.06)); z-index: 10; background-size: 100% 2px, 3px 100%; pointer-events: none; position: absolute; top: 0; left: 0; }
-        h1 { font-size: 1.2rem; text-transform: uppercase; letter-spacing: 2px; }
-        #status { font-size: 1.5rem; margin: 20px 0; color: #ff00ff; }
-        .btn { background: transparent; border: 2px solid #ff00ff; color: #ff00ff; padding: 20px 40px; font-size: 1.5rem; cursor: pointer; display: none; margin-top: 20px; }
-        .btn:active { background: #ff00ff; color: #000; }
-        #task-alert { color: yellow; display: none; animation: blink 1s infinite; }
-        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0; } 100% { opacity: 1; } }
+        .hud-container { border: 2px solid #39ff14; margin: 20px; padding: 20px; box-shadow: 0 0 15px #39ff14; position: relative; height: 85vh; display: flex; flex-direction: column; justify-content: center; }
+        #status { font-size: 1.2rem; margin: 20px 0; color: #ff00ff; font-weight: bold; }
+        .btn { background: #ff00ff; border: none; color: white; padding: 25px; font-size: 1.5rem; cursor: pointer; display: none; width: 100%; font-weight: bold; box-shadow: 0 0 20px #ff00ff; border-radius: 10px; }
+        #player-id { font-size: 0.8rem; opacity: 0.6; position: absolute; bottom: 10px; width: 100%; left: 0; }
     </style>
 </head>
 <body>
-    <div class="scanline"></div>
     <div class="hud-container">
-        <h1>Sunnyside HUD v1.0</h1>
-        <div id="player-name">Laden...</div>
-        <div id="status">INITIALISEREN...</div>
-        <div id="task-alert">LOCATIE BEREIKT: VOER TAAK UIT!</div>
-        <button id="kill-btn" class="btn">ELIMINEER</button>
+        <h1>SYSTEM ACTIVE</h1>
+        <div id="status">LOCATING SATELLITES...</div>
+        <button id="kill-btn" class="btn">ELIMINEER TARGET</button>
+        <div id="player-id">Scanner ID: --</div>
     </div>
 
     <script>
@@ -42,11 +36,14 @@
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
 
-        let myId = prompt("Voer je naam in:") || "Anoniem";
+        let myId = localStorage.getItem('playerName') || prompt("Wat is je naam?");
+        if(!myId) { myId = "Toy_" + Math.floor(Math.random() * 1000); }
+        localStorage.setItem('playerName', myId);
+        document.getElementById('player-id').innerText = "Scanner ID: " + myId;
+
         let myRole = "toy"; 
         let myStatus = "alive";
 
-        // GPS Logica
         if ("geolocation" in navigator) {
             navigator.geolocation.watchPosition(position => {
                 const { latitude, longitude } = position.coords;
@@ -59,52 +56,55 @@
                     role: myRole
                 });
                 checkProximity(latitude, longitude);
-            }, err => console.error(err), { enableHighAccuracy: true });
+            }, err => {
+                document.getElementById('status').innerText = "GPS ERROR: Zet locatie aan!";
+            }, { enableHighAccuracy: true });
         }
 
-        // Haversine formule voor afstandsberekening
         function getDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371e3; // meter
-            const φ1 = lat1 * Math.PI/180;
-            const φ2 = lat2 * Math.PI/180;
-            const Δφ = (lat2-lat1) * Math.PI/180;
-            const Δλ = (lon2-lon1) * Math.PI/180;
-            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) * Math.sin(Δλ/2);
+            const R = 6371e3;
+            const dLat = (lat2-lat1) * Math.PI/180;
+            const dLon = (lon2-lon1) * Math.PI/180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2) * Math.sin(dLon/2);
             return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
         }
 
-        // Check voor Kill Button en Taken
         function checkProximity(myLat, myLng) {
+            if(myRole !== "traitor" || myStatus === "dead") return;
+            
             db.ref('players').once('value', snapshot => {
                 const players = snapshot.val();
-                let showKill = false;
+                let targetId = null;
 
                 for (let id in players) {
                     if (id !== myId && players[id].status === "alive") {
                         const dist = getDistance(myLat, myLng, players[id].lat, players[id].lng);
-                        if (myRole === "traitor" && dist < 10) {
-                            showKill = true;
-                            document.getElementById('kill-btn').onclick = () => eliminate(id);
+                        if (dist < 10) { // Binnen 10 meter
+                            targetId = id;
                         }
                     }
                 }
-                document.getElementById('kill-btn').style.display = showKill ? 'inline-block' : 'none';
+                
+                const btn = document.getElementById('kill-btn');
+                if (targetId) {
+                    btn.style.display = 'block';
+                    btn.onclick = () => {
+                        db.ref('players/' + targetId).update({ status: 'dead' });
+                        alert("DOELWIT UITGESCHAKELD!");
+                    };
+                } else {
+                    btn.style.display = 'none';
+                }
             });
         }
 
-        function eliminate(targetId) {
-            db.ref('players/' + targetId).update({ status: 'dead' });
-            alert("DOELWIT GEËLIMINEERD");
-        }
-
-        // Luister naar rol-updates
         db.ref('players/' + myId).on('value', snap => {
             const data = snap.val();
             if(data) {
-                myRole = data.role;
-                myStatus = data.status;
-                document.getElementById('status').innerText = data.status === 'dead' ? 'STATUS: GEËLIMINEERD' : 'STATUS: ACTIEF';
-                if(data.status === 'dead') document.body.style.filter = "grayscale(1)";
+                myRole = data.role || "toy";
+                myStatus = data.status || "alive";
+                document.getElementById('status').innerText = (myStatus === 'dead') ? 'OFFLINE (GEËLIMINEERD)' : (myRole === 'traitor' ? 'JE BENT DE VERRADER' : 'STATUS: VEILIG');
+                if(myStatus === 'dead') document.body.style.filter = "grayscale(1)";
             }
         });
     </script>
