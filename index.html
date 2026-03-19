@@ -1,110 +1,151 @@
+<!-- Kopieer dit volledig over je oude index.html heen -->
 <!DOCTYPE html>
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Sunnyside Protocol - Player</title>
+    <title>Sunnyside - Speler</title>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
     <style>
-        body { background: #0a0a0a; color: #39ff14; font-family: 'Courier New', monospace; text-align: center; margin: 0; overflow: hidden; }
-        .hud-container { border: 2px solid #39ff14; margin: 20px; padding: 20px; box-shadow: 0 0 15px #39ff14; position: relative; height: 85vh; display: flex; flex-direction: column; justify-content: center; }
-        #status { font-size: 1.2rem; margin: 20px 0; color: #ff00ff; font-weight: bold; }
-        .btn { background: #ff00ff; border: none; color: white; padding: 25px; font-size: 1.5rem; cursor: pointer; display: none; width: 100%; font-weight: bold; box-shadow: 0 0 20px #ff00ff; border-radius: 10px; }
-        #player-id { font-size: 0.8rem; opacity: 0.6; position: absolute; bottom: 10px; width: 100%; left: 0; }
+        body { background: #000; color: #39ff14; font-family: 'Courier New', monospace; margin: 0; text-align: center; transition: 0.5s; }
+        .hud { height: 100vh; display: flex; flex-direction: column; justify-content: space-around; padding: 20px; box-sizing: border-box; }
+        
+        /* Sabotage Effects */
+        .lights-out { filter: brightness(0.05) contrast(1.5); }
+        #gas-alert { display: none; background: red; color: white; padding: 10px; animation: blink 0.5s infinite; }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0; } }
+
+        /* UI Elements */
+        .btn-kill { background: #ff00ff; color: white; padding: 30px; border: none; font-size: 1.5rem; display: none; width: 100%; border-radius: 15px; box-shadow: 0 0 20px #ff00ff; }
+        .task-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,255,0,0.9); color: black; z-index: 100; flex-direction: column; justify-content: center; align-items: center; }
+        .task-btn { background: black; color: #39ff14; padding: 20px; border: none; font-size: 1.2rem; margin-top: 10px; }
+        #radar { font-size: 0.8rem; color: #555; }
     </style>
 </head>
 <body>
-    <div class="hud-container">
-        <h1>SYSTEM ACTIVE</h1>
-        <div id="status">LOCATING SATELLITES...</div>
-        <button id="kill-btn" class="btn">ELIMINEER TARGET</button>
-        <div id="player-id">Scanner ID: --</div>
+
+    <div id="gas-alert">⚠️ TOXIC GAS DETECTED ⚠️</div>
+
+    <div class="hud" id="main-hud">
+        <h1>SUNNYSIDE HUD</h1>
+        <div id="status">INITIALISEREN...</div>
+        
+        <div id="task-nearby" style="display:none;">
+            <p>TAAK DICHTBIJ!</p>
+            <button class="task-btn" onclick="openTask()">START TAAK</button>
+        </div>
+
+        <button id="kill-btn" class="btn-kill">ELIMINEER</button>
+        <div id="radar">Zoeken naar signalen...</div>
+    </div>
+
+    <!-- Task Mini-Game Pop-up -->
+    <div id="task-modal" class="task-modal">
+        <h2 id="task-title">Taak</h2>
+        <p id="task-desc">Systeem herstellen...</p>
+        <div id="task-game-area"></div>
+        <button class="task-btn" onclick="closeTask()">ANNULEREN</button>
     </div>
 
     <script>
         const firebaseConfig = {
-          apiKey: "AIzaSyAGvUwRjfQQ0QSh2S4n6mGf8k7sZlBggEs",
-          authDomain: "tradingpost-57b20.firebaseapp.com",
-          databaseURL: "https://tradingpost-57b20-default-rtdb.europe-west1.firebasedatabase.app",
-          projectId: "tradingpost-57b20",
-          storageBucket: "tradingpost-57b20.firebasestorage.app",
-          messagingSenderId: "358205969306",
-          appId: "1:358205969306:web:b0440ef5815a21d5fca023",
-          measurementId: "G-ERK90MPVWR"
+            apiKey: "AIzaSyAGvUwRjfQQ0QSh2S4n6mGf8k7sZlBggEs",
+            authDomain: "tradingpost-57b20.firebaseapp.com",
+            databaseURL: "https://tradingpost-57b20-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "tradingpost-57b20",
+            storageBucket: "tradingpost-57b20.firebasestorage.app",
+            messagingSenderId: "358205969306",
+            appId: "1:358205969306:web:b0440ef5815a21d5fca023",
+            measurementId: "G-ERK90MPVWR"
         };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
 
         let myId = localStorage.getItem('playerName') || prompt("Wat is je naam?");
-        if(!myId) { myId = "Toy_" + Math.floor(Math.random() * 1000); }
         localStorage.setItem('playerName', myId);
-        document.getElementById('player-id').innerText = "Scanner ID: " + myId;
 
-        let myRole = "toy"; 
-        let myStatus = "alive";
+        let myLat, myLng, myRole, myStatus;
+        let nearbyTaskId = null;
 
-        if ("geolocation" in navigator) {
-            navigator.geolocation.watchPosition(position => {
-                const { latitude, longitude } = position.coords;
-                db.ref('players/' + myId).update({
-                    lat: latitude,
-                    lng: longitude,
-                    last_seen: Date.now(),
-                    name: myId,
-                    status: myStatus,
-                    role: myRole
-                });
-                checkProximity(latitude, longitude);
-            }, err => {
-                document.getElementById('status').innerText = "GPS ERROR: Zet locatie aan!";
-            }, { enableHighAccuracy: true });
-        }
+        // GPS Start
+        navigator.geolocation.watchPosition(pos => {
+            myLat = pos.coords.latitude;
+            myLng = pos.coords.longitude;
+            db.ref('players/' + myId).update({ lat: myLat, lng: myLng, name: myId, last_seen: Date.now() });
+            processLogic();
+        }, null, { enableHighAccuracy: true });
 
-        function getDistance(lat1, lon1, lat2, lon2) {
+        function getDist(lat1, lon1, lat2, lon2) {
             const R = 6371e3;
             const dLat = (lat2-lat1) * Math.PI/180;
             const dLon = (lon2-lon1) * Math.PI/180;
-            const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+            const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
             return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
         }
 
-        function checkProximity(myLat, myLng) {
-            if(myRole !== "traitor" || myStatus === "dead") return;
-            
-            db.ref('players').once('value', snapshot => {
-                const players = snapshot.val();
-                let targetId = null;
+        function processLogic() {
+            db.ref().once('value', snap => {
+                const data = snap.val();
+                if(!data) return;
 
-                for (let id in players) {
-                    if (id !== myId && players[id].status === "alive") {
-                        const dist = getDistance(myLat, myLng, players[id].lat, players[id].lng);
-                        if (dist < 10) { // Binnen 10 meter
-                            targetId = id;
+                // 1. Kill Logic
+                const players = data.players || {};
+                let canKill = false;
+                for(let id in players) {
+                    if(id !== myId && players[id].status !== 'dead') {
+                        if(getDist(myLat, myLng, players[id].lat, players[id].lng) < 10 && myRole === 'traitor') {
+                            canKill = id;
                         }
                     }
                 }
-                
-                const btn = document.getElementById('kill-btn');
-                if (targetId) {
-                    btn.style.display = 'block';
-                    btn.onclick = () => {
-                        db.ref('players/' + targetId).update({ status: 'dead' });
-                        alert("DOELWIT UITGESCHAKELD!");
-                    };
-                } else {
-                    btn.style.display = 'none';
+                const kb = document.getElementById('kill-btn');
+                kb.style.display = canKill ? 'block' : 'none';
+                kb.onclick = () => db.ref('players/'+canKill).update({status: 'dead'});
+
+                // 2. Task Proximity
+                const tasks = data.tasks || {};
+                nearbyTaskId = null;
+                for(let tid in tasks) {
+                    if(getDist(myLat, myLng, tasks[tid].lat, tasks[tid].lng) < 15) {
+                        nearbyTaskId = tid;
+                        document.getElementById('task-title').innerText = tasks[tid].name;
+                    }
                 }
+                document.getElementById('task-nearby').style.display = nearbyTaskId ? 'block' : 'none';
+
+                // 3. Sabotage logic
+                const sabo = data.game_settings?.sabotage;
+                document.body.classList.toggle('lights-out', sabo?.active && sabo?.type === 'lights' && myRole !== 'traitor');
+                document.getElementById('gas-alert').style.display = (sabo?.active && sabo?.type === 'gas') ? 'block' : 'none';
             });
         }
 
+        // Simpele Taak: 10 keer tikken
+        let taps = 0;
+        function openTask() {
+            document.getElementById('task-modal').style.display = 'flex';
+            const area = document.getElementById('task-game-area');
+            taps = 0;
+            area.innerHTML = `<button class="task-btn" onclick="doTap()">TIK HIER (0/10)</button>`;
+        }
+        function doTap() {
+            taps++;
+            document.getElementById('task-game-area').innerHTML = `<button class="task-btn" onclick="doTap()">TIK HIER (${taps}/10)</button>`;
+            if(taps >= 10) {
+                alert("TAAK VOLTOOID!");
+                closeTask();
+            }
+        }
+        function closeTask() { document.getElementById('task-modal').style.display = 'none'; }
+
+        // Rol updates
         db.ref('players/' + myId).on('value', snap => {
-            const data = snap.val();
-            if(data) {
-                myRole = data.role || "toy";
-                myStatus = data.status || "alive";
-                document.getElementById('status').innerText = (myStatus === 'dead') ? 'OFFLINE (GEËLIMINEERD)' : (myRole === 'traitor' ? 'JE BENT DE VERRADER' : 'STATUS: VEILIG');
-                if(myStatus === 'dead') document.body.style.filter = "grayscale(1)";
+            const p = snap.val();
+            if(p) {
+                myRole = p.role;
+                myStatus = p.status;
+                document.getElementById('status').innerText = (myStatus === 'dead') ? "STATUS: GEËLIMINEERD" : (myRole === 'traitor' ? "JE BENT DE VERRADER" : "STATUS: VEILIG");
             }
         });
     </script>
