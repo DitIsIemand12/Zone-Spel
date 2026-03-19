@@ -1,4 +1,3 @@
-<!-- Kopieer dit volledig over je oude admin.html heen -->
 <!DOCTYPE html>
 <html lang="nl">
 <head>
@@ -9,47 +8,24 @@
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
     <style>
         body { margin: 0; background: #000; color: #39ff14; font-family: 'Courier New', monospace; display: flex; }
-        #map { height: 100vh; flex-grow: 1; background: #111; }
-        #sidebar { width: 300px; padding: 15px; background: #0a0a0a; border-left: 2px solid #39ff14; overflow-y: auto; }
-        .btn { background: #39ff14; border: none; padding: 10px; cursor: pointer; font-weight: bold; width: 100%; margin-bottom: 5px; }
-        .btn-red { background: #ff0000; color: white; }
-        .btn-purple { background: #ff00ff; color: white; }
-        .task-list { font-size: 0.8rem; margin-top: 10px; color: #aaa; }
+        #map { height: 100vh; flex-grow: 1; }
+        #sidebar { width: 300px; padding: 15px; background: #0a0a0a; border-left: 2px solid #39ff14; }
+        .btn { background: #39ff14; color: black; border: none; padding: 10px; width: 100%; cursor: pointer; font-weight: bold; margin-bottom: 5px; }
     </style>
 </head>
 <body>
     <div id="map"></div>
     <div id="sidebar">
-        <h2>MASTER CMD</h2>
-        <div id="player-stats">Laden...</div>
-        
+        <h2>ADMIN CONSOLE</h2>
+        <p>Klik op de kaart om een taak te plaatsen.</p>
+        <div id="player-list"></div>
         <hr>
-        <h3>SABOTAGE</h3>
-        <button class="btn btn-red" onclick="triggerSabotage('lights')">LIGHTS OUT</button>
-        <button class="btn btn-red" onclick="triggerSabotage('gas')">TOXIC GAS</button>
-        <button class="btn" onclick="triggerSabotage('none')">REPAIR ALL</button>
-
-        <hr>
-        <h3>TASKS</h3>
-        <p style="font-size: 0.7rem;">Klik op de kaart om een taak-locatie toe te voegen.</p>
-        <button class="btn btn-purple" onclick="clearTasks()">VERWIJDER ALLE TAKEN</button>
-        <div id="task-info" class="task-list"></div>
-        
-        <button class="btn btn-red" style="margin-top:20px" onclick="resetGame()">HARD RESET</button>
+        <button class="btn" style="background:red; color:white;" onclick="resetAll()">RESET GAME (WIST ALLES)</button>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
     <script>
-        const firebaseConfig = {
-            apiKey: "AIzaSyAGvUwRjfQQ0QSh2S4n6mGf8k7sZlBggEs",
-            authDomain: "tradingpost-57b20.firebaseapp.com",
-            databaseURL: "https://tradingpost-57b20-default-rtdb.europe-west1.firebasedatabase.app",
-            projectId: "tradingpost-57b20",
-            storageBucket: "tradingpost-57b20.firebasestorage.app",
-            messagingSenderId: "358205969306",
-            appId: "1:358205969306:web:b0440ef5815a21d5fca023",
-            measurementId: "G-ERK90MPVWR"
-        };
+        const firebaseConfig = { /* GEBRUIK JE EIGEN CONFIG HIER */ };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
 
@@ -59,63 +35,40 @@
         let markers = {};
         let taskMarkers = [];
 
-        // --- TAKEN TOEVOEGEN ---
-        map.on('click', function(e) {
-            const taskName = prompt("Naam van de taak (bijv: Bedrading fixen):");
-            if (taskName) {
-                const newTaskRef = db.ref('tasks').push();
-                newTaskRef.set({
-                    name: taskName,
-                    lat: e.latlng.lat,
-                    lng: e.latlng.lng
-                });
-            }
+        // Taak toevoegen op klik
+        map.on('click', e => {
+            const name = prompt("Naam van deze taak:");
+            if(name) db.ref('tasks').push({ name, lat: e.latlng.lat, lng: e.latlng.lng });
         });
 
-        // --- DATA UPDATES ---
-        db.ref().on('value', snapshot => {
-            const data = snapshot.val();
+        // Live Kaart Updates
+        db.ref().on('value', snap => {
+            const data = snap.val();
             if(!data) return;
 
-            // Update Spelers
+            // Spelers tekenen
             const players = data.players || {};
-            let statsHtml = "";
-            for (let id in players) {
+            for(let id in players) {
                 const p = players[id];
-                const color = p.status === 'dead' ? 'gray' : (p.role === 'traitor' ? 'magenta' : 'cyan');
-                if (markers[id]) {
-                    markers[id].setLatLng([p.lat, p.lng]).setStyle({color: color, fillColor: color});
-                } else {
-                    markers[id] = L.circleMarker([p.lat, p.lng], {color: color, radius: 8, fillOpacity: 0.8}).addTo(map).bindTooltip(p.name, {permanent:true});
-                    map.setView([p.lat, p.lng], 18);
-                }
-                statsHtml += `<div>${p.name}: ${p.status}</div>`;
+                const col = p.status === 'dead' ? 'gray' : (p.role === 'traitor' ? 'magenta' : 'cyan');
+                if(markers[id]) markers[id].setLatLng([p.lat, p.lng]).setStyle({color: col, fillColor: col});
+                else markers[id] = L.circleMarker([p.lat, p.lng], {color: col, radius: 10, fillOpacity: 0.8}).addTo(map).bindTooltip(p.name, {permanent: true});
             }
-            document.getElementById('player-stats').innerHTML = statsHtml;
 
-            // Update Taken op Kaart
+            // Taken tekenen (opgeslagen in Firebase)
             taskMarkers.forEach(m => map.removeLayer(m));
             taskMarkers = [];
             const tasks = data.tasks || {};
-            for (let tid in tasks) {
+            for(let tid in tasks) {
                 const t = tasks[tid];
                 const tm = L.marker([t.lat, t.lng], {
-                    icon: L.divIcon({html: "⭐", className: 'task-icon', iconSize: [20, 20]})
+                    icon: L.divIcon({html: "⭐", className: 'task-marker'})
                 }).addTo(map).bindTooltip(t.name);
                 taskMarkers.push(tm);
             }
         });
 
-        function triggerSabotage(type) {
-            db.ref('game_settings/sabotage').set({
-                active: type !== 'none',
-                type: type,
-                timestamp: Date.now()
-            });
-        }
-
-        function clearTasks() { db.ref('tasks').remove(); }
-        function resetGame() { if(confirm("Reset alles?")) db.ref().remove(); }
+        function resetAll() { if(confirm("Alles wissen?")) db.ref().remove(); }
     </script>
 </body>
 </html>
