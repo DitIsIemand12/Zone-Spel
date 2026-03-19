@@ -7,25 +7,36 @@
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
     <style>
-        body { margin: 0; background: #000; color: #39ff14; font-family: 'Courier New', monospace; display: flex; }
-        #map { height: 100vh; flex-grow: 1; }
-        #sidebar { width: 300px; padding: 15px; background: #0a0a0a; border-left: 2px solid #39ff14; }
-        .btn { background: #39ff14; color: black; border: none; padding: 10px; width: 100%; cursor: pointer; font-weight: bold; margin-bottom: 5px; }
+        body { margin: 0; background: #000; color: #39ff14; font-family: 'Courier New', monospace; display: flex; height: 100vh; }
+        #map { flex-grow: 1; background: #111; }
+        #sidebar { width: 300px; padding: 15px; background: #0a0a0a; border-left: 2px solid #39ff14; overflow-y: auto; }
+        .btn { background: #39ff14; color: black; border: none; padding: 10px; width: 100%; cursor: pointer; font-weight: bold; margin-bottom: 5px; text-transform: uppercase; }
+        .btn-red { background: #ff0000; color: white; }
+        .player-row { border-bottom: 1px solid #333; padding: 5px 0; font-size: 0.8rem; }
     </style>
 </head>
 <body>
     <div id="map"></div>
     <div id="sidebar">
-        <h2>ADMIN CONSOLE</h2>
-        <p>Klik op de kaart om een taak te plaatsen.</p>
-        <div id="player-list"></div>
+        <h2>ADMIN PANEL</h2>
+        <p style="font-size: 0.7rem;">Klik op kaart voor taken.</p>
+        <div id="player-list">Wachten op spelers...</div>
         <hr>
-        <button class="btn" style="background:red; color:white;" onclick="resetAll()">RESET GAME (WIST ALLES)</button>
+        <button class="btn btn-red" onclick="resetAll()">RESET VOLLEDIGE GAME</button>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
     <script>
-        const firebaseConfig = { /* GEBRUIK JE EIGEN CONFIG HIER */ };
+        const firebaseConfig = {
+          apiKey: "AIzaSyAGvUwRjfQQ0QSh2S4n6mGf8k7sZlBggEs",
+          authDomain: "tradingpost-57b20.firebaseapp.com",
+          databaseURL: "https://tradingpost-57b20-default-rtdb.europe-west1.firebasedatabase.app",
+          projectId: "tradingpost-57b20",
+          storageBucket: "tradingpost-57b20.firebasestorage.app",
+          messagingSenderId: "358205969306",
+          appId: "1:358205969306:web:b0440ef5815a21d5fca023",
+          measurementId: "G-ERK90MPVWR"
+        };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
 
@@ -35,40 +46,46 @@
         let markers = {};
         let taskMarkers = [];
 
-        // Taak toevoegen op klik
+        // Taken toevoegen
         map.on('click', e => {
             const name = prompt("Naam van deze taak:");
             if(name) db.ref('tasks').push({ name, lat: e.latlng.lat, lng: e.latlng.lng });
         });
 
-        // Live Kaart Updates
+        // Live Synchronisatie
         db.ref().on('value', snap => {
-            const data = snap.val();
-            if(!data) return;
-
-            // Spelers tekenen
+            const data = snap.val() || {};
+            
+            // Spelers op de kaart
             const players = data.players || {};
+            const listDiv = document.getElementById('player-list');
+            listDiv.innerHTML = "<h3>SPELERS:</h3>";
+
             for(let id in players) {
                 const p = players[id];
-                const col = p.status === 'dead' ? 'gray' : (p.role === 'traitor' ? 'magenta' : 'cyan');
-                if(markers[id]) markers[id].setLatLng([p.lat, p.lng]).setStyle({color: col, fillColor: col});
-                else markers[id] = L.circleMarker([p.lat, p.lng], {color: col, radius: 10, fillOpacity: 0.8}).addTo(map).bindTooltip(p.name, {permanent: true});
+                const col = p.status === 'dead' ? 'gray' : (p.role === 'traitor' ? '#ff00ff' : '#00ffff');
+                
+                if(markers[id]) {
+                    markers[id].setLatLng([p.lat, p.lng]).setStyle({color: col, fillColor: col});
+                } else {
+                    markers[id] = L.circleMarker([p.lat, p.lng], {color: col, radius: 10, fillOpacity: 0.8}).addTo(map).bindTooltip(p.name, {permanent: true});
+                    map.panTo([p.lat, p.lng]);
+                }
+                listDiv.innerHTML += `<div class="player-row">${p.name} [${p.role}] - ${p.status}</div>`;
             }
 
-            // Taken tekenen (opgeslagen in Firebase)
+            // Taken op de kaart
             taskMarkers.forEach(m => map.removeLayer(m));
             taskMarkers = [];
             const tasks = data.tasks || {};
             for(let tid in tasks) {
                 const t = tasks[tid];
-                const tm = L.marker([t.lat, t.lng], {
-                    icon: L.divIcon({html: "⭐", className: 'task-marker'})
-                }).addTo(map).bindTooltip(t.name);
+                const tm = L.circleMarker([t.lat, t.lng], {color: 'yellow', radius: 5}).addTo(map).bindTooltip("TAAK: " + t.name);
                 taskMarkers.push(tm);
             }
         });
 
-        function resetAll() { if(confirm("Alles wissen?")) db.ref().remove(); }
+        function resetAll() { if(confirm("Dit wist alle spelers en taken! Weet je het zeker?")) db.ref().remove(); }
     </script>
 </body>
 </html>
