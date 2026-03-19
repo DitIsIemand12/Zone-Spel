@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <title>Sunnyside Protocol - Master Control</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
+    <style>
+        #map { height: 100vh; width: 100%; background: #111; }
+        body { margin: 0; padding: 0; background: #000; color: white; font-family: sans-serif; }
+        #controls { position: absolute; top: 10px; right: 10px; z-index: 1000; background: rgba(0,0,0,0.8); padding: 15px; border: 1px solid #39ff14; }
+        button { background: #39ff14; color: black; border: none; padding: 10px; cursor: pointer; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <h3>Master Control</h3>
+        <button onclick="resetGame()">Reset Game</button>
+        <div id="stats"></div>
+    </div>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+    <script>
+        const firebaseConfig = { /* PLAK HIER DEZELFDE CONFIG AS BOVEN */ };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        const map = L.map('map').setView([52.3676, 4.9041], 18); // Default focus
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+
+        let markers = {};
+
+        // Sync spelers naar kaart
+        db.ref('players').on('value', snapshot => {
+            const players = snapshot.val();
+            const statsDiv = document.getElementById('stats');
+            statsDiv.innerHTML = "";
+
+            for (let id in players) {
+                const p = players[id];
+                const color = p.status === 'dead' ? 'gray' : (p.role === 'traitor' ? 'red' : 'blue');
+                
+                if (markers[id]) {
+                    markers[id].setLatLng([p.lat, p.lng]);
+                } else {
+                    markers[id] = L.circleMarker([p.lat, p.lng], { color: color, radius: 10 }).addTo(map)
+                        .bindTooltip(p.name, { permanent: true, direction: 'top' });
+                }
+
+                statsDiv.innerHTML += `<p>${p.name}: ${p.status} (${p.role})</p>`;
+            }
+        });
+
+        function resetGame() {
+            if(confirm("Alles resetten?")) {
+                db.ref('players').remove();
+                location.reload();
+            }
+        }
+    </script>
+</body>
+</html>
