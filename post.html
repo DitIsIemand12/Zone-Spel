@@ -7,40 +7,48 @@
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
     <style>
         body { background: #111; color: orange; font-family: monospace; padding: 20px; text-align: center; }
-        .player-box { background: #222; border: 1px solid orange; padding: 15px; margin-bottom: 10px; border-radius: 10px; display: flex; justify-content: space-between; align-items: center; }
-        .btn-plus { background: #0f0; color: #000; border: none; padding: 10px; font-weight: bold; }
+        .p-box { background: #222; border: 1px solid orange; padding: 10px; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; }
+        .offline { background: red; color: white; padding: 50px; font-size: 24px; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 100; display: none; }
     </style>
 </head>
 <body>
+    <div id="offline-screen" class="offline">⚠️ SYSTEMS OFFLINE<br>REPAREER LICHTEN</div>
     <h2>POST COMMANDER</h2>
-    <div id="nearby-list">Wachten op spelers...</div>
+    <div id="list"></div>
 
     <script>
-        const firebaseConfig = { /* JOUW CONFIG HIER */ };
+        const firebaseConfig = {
+            apiKey: "AIzaSyAGvUwRjfQQ0QSh2S4n6mGf8k7sZlBggEs",
+            authDomain: "tradingpost-57b20.firebaseapp.com",
+            databaseURL: "https://tradingpost-57b20-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "tradingpost-57b20",
+            storageBucket: "tradingpost-57b20.firebasestorage.app",
+            messagingSenderId: "358205969306",
+            appId: "1:358205969306:web:b0440ef5815a21d5fca023"
+        };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
-
         let myLat, myLng;
-        navigator.geolocation.watchPosition(p => {
-            myLat = p.coords.latitude; myLng = p.coords.longitude;
-        }, null, {enableHighAccuracy:true});
 
-        db.ref('players').on('value', snap => {
-            const ps = snap.val();
-            const list = document.getElementById('nearby-list');
-            list.innerHTML = "";
-            for(let id in ps) {
-                const p = ps[id];
-                if(p.state === 'active' && p.status === 'alive' && dist(myLat, myLng, p.lat, p.lng) < 20) {
-                    list.innerHTML += `<div class="player-box">
-                        <span>${p.name}</span>
-                        <button class="btn-plus" onclick="addPts('${id}', 10)">+10 PNT</button>
-                    </div>`;
+        navigator.geolocation.watchPosition(p => { myLat = p.coords.latitude; myLng = p.coords.longitude; });
+
+        db.ref().on('value', snap => {
+            const data = snap.val();
+            const sabActive = data.game_settings?.sabotage?.active;
+            document.getElementById('offline-screen').style.display = sabActive ? 'block' : 'none';
+
+            const list = document.getElementById('list'); list.innerHTML = "";
+            for(let id in data.players) {
+                const p = data.players[id];
+                if(p.state==='active' && p.status==='alive' && p.role!=='post') {
+                    if(dist(myLat, myLng, p.lat, p.lng) < 20) {
+                        list.innerHTML += `<div class="p-box"><span>${p.name}</span><button onclick="add('${id}')">+10 PNT</button></div>`;
+                    }
                 }
             }
         });
 
-        function addPts(id, amt) { db.ref('players/'+id+'/points').transaction(p => (p || 0) + amt); }
+        function add(id) { db.ref('players/'+id+'/points').transaction(p => (p || 0) + 10); }
         function dist(la1, lo1, la2, lo2) {
             const R = 6371e3;
             const a = Math.sin(((la2-la1)*Math.PI/180)/2)**2 + Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(((lo2-lo1)*Math.PI/180)/2)**2;
