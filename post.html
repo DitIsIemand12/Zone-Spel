@@ -1,21 +1,28 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <title>POST COMMANDER</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
     <style>
-        body { background: #111; color: orange; font-family: monospace; padding: 20px; text-align: center; }
+        body { background: #111; color: orange; font-family: monospace; text-align: center; margin: 0; padding: 0; }
+        .screen { height: 100vh; display: flex; flex-direction: column; padding: 10px; box-sizing: border-box; }
+        #radar { height: 200px; width: 100%; border: 1px solid orange; margin-bottom: 10px; }
         .p-box { background: #222; border: 1px solid orange; padding: 10px; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; }
-        .offline { background: red; color: white; padding: 50px; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 100; display: none; }
+        .offline { background: red; color: white; padding: 20px; font-weight: bold; display: none; }
     </style>
 </head>
 <body>
-    <div id="offline-screen" class="offline">⚠️ SYSTEMS OFFLINE<br>REPAREER LICHTEN</div>
-    <h2>POST COMMANDER</h2>
-    <div id="list"></div>
+    <div class="screen">
+        <div id="offline" class="offline">⚠️ LICHTEN UIT: GEEN PUNTEN MOGELIJK</div>
+        <div id="radar"></div>
+        <h3>NABYE SPELERS</h3>
+        <div id="list">Wachten...</div>
+    </div>
 
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         const firebaseConfig = {
             apiKey: "AIzaSyAGvUwRjfQQ0QSh2S4n6mGf8k7sZlBggEs",
@@ -28,23 +35,51 @@
         };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
-        let myLat, myLng;
 
-        navigator.geolocation.watchPosition(p => { myLat = p.coords.latitude; myLng = p.coords.longitude; });
+        let myName = localStorage.getItem('pName') || prompt("Naam van deze post?");
+        localStorage.setItem('pName', myName);
+        let myLat, myLng, radar, markers = {};
+
+        // Automatisch aanmelden als POST
+        db.ref('players/'+myName).once('value', s => {
+            if(!s.exists()) db.ref('players/'+myName).set({name: myName, state: 'pending', role: 'post', lat: 52, lng: 5});
+        });
+
+        navigator.geolocation.watchPosition(p => {
+            myLat = p.coords.latitude; myLng = p.coords.longitude;
+            db.ref('players/'+myName).update({lat: myLat, lng: myLng});
+            if(radar) radar.panTo([myLat, myLng]);
+        }, null, {enableHighAccuracy:true});
 
         db.ref().on('value', snap => {
-            const data = snap.val();
-            document.getElementById('offline-screen').style.display = data.game_settings?.sabotage?.active ? 'block' : 'none';
+            const data = snap.val() || {};
+            const sab = data.game_settings?.sabotage?.active;
+            document.getElementById('offline').style.display = sab ? 'block' : 'none';
+
+            if(!radar && myLat) {
+                radar = L.map('radar', {zoomControl:false, attributionControl:false}).setView([myLat, myLng], 18);
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(radar);
+            }
+
             const list = document.getElementById('list'); list.innerHTML = "";
             for(let id in data.players) {
                 const p = data.players[id];
-                if(p.state==='active' && p.status==='alive' && p.role!=='post' && dist(myLat, myLng, p.lat, p.lng) < 20) {
-                    list.innerHTML += `<div class="p-box"><span>${p.name}</span><button onclick="add('${id}')">+10 PNT</button></div>`;
+                if(p.state === 'active' && p.status === 'alive') {
+                    // Radar Update (Witte stippen)
+                    if(radar) {
+                        let col = id === myName ? 'orange' : 'white';
+                        if(markers[id]) markers[id].setLatLng([p.lat, p.lng]);
+                        else markers[id] = L.circleMarker([p.lat, p.lng], {radius:5, color:col}).addTo(radar);
+                    }
+                    // Puntenlijst
+                    if(p.role !== 'post' && dist(myLat, myLng, p.lat, p.lng) < 20) {
+                        list.innerHTML += `<div class="p-box">${p.name} <button onclick="add('${id}')" ${sab?'disabled':''}>+10</button></div>`;
+                    }
                 }
             }
         });
 
-        function add(id) { db.ref('players/'+id+'/points').transaction(p => (p || 0) + 10); }
+        function add(id) { db.ref('players/'+id+'/points').transaction(v => (v||0)+10); }
         function dist(la1, lo1, la2, lo2) {
             const R = 6371e3;
             const a = Math.sin(((la2-la1)*Math.PI/180)/2)**2 + Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(((lo2-lo1)*Math.PI/180)/2)**2;
