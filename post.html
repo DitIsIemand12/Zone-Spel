@@ -8,7 +8,7 @@
     <style>
         body { background: #111; color: orange; font-family: monospace; padding: 20px; text-align: center; }
         .p-box { background: #222; border: 1px solid orange; padding: 10px; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; }
-        .offline { background: red; color: white; padding: 50px; font-size: 24px; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 100; display: none; }
+        .offline { background: red; color: white; padding: 50px; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 100; display: none; }
     </style>
 </head>
 <body>
@@ -34,16 +34,12 @@
 
         db.ref().on('value', snap => {
             const data = snap.val();
-            const sabActive = data.game_settings?.sabotage?.active;
-            document.getElementById('offline-screen').style.display = sabActive ? 'block' : 'none';
-
+            document.getElementById('offline-screen').style.display = data.game_settings?.sabotage?.active ? 'block' : 'none';
             const list = document.getElementById('list'); list.innerHTML = "";
             for(let id in data.players) {
                 const p = data.players[id];
-                if(p.state==='active' && p.status==='alive' && p.role!=='post') {
-                    if(dist(myLat, myLng, p.lat, p.lng) < 20) {
-                        list.innerHTML += `<div class="p-box"><span>${p.name}</span><button onclick="add('${id}')">+10 PNT</button></div>`;
-                    }
+                if(p.state==='active' && p.status==='alive' && p.role!=='post' && dist(myLat, myLng, p.lat, p.lng) < 20) {
+                    list.innerHTML += `<div class="p-box"><span>${p.name}</span><button onclick="add('${id}')">+10 PNT</button></div>`;
                 }
             }
         });
