@@ -11,8 +11,9 @@
         #sidebar { width: 350px; background: #0a0a0a; border-left: 2px solid #0f0; padding: 15px; overflow-y: auto; }
         .btn { background: #0f0; color: #000; border: none; padding: 10px; width: 100%; cursor: pointer; font-weight: bold; margin-bottom: 10px; text-transform: uppercase; }
         .section { border: 1px solid #333; padding: 10px; margin-bottom: 15px; background: #111; }
-        .q-item, .p-row { border-bottom: 1px solid #333; padding: 5px 0; display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+        .item-row { border-bottom: 1px solid #333; padding: 5px 0; display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
         input, select { background: #000; color: #0f0; border: 1px solid #0f0; padding: 5px; margin-bottom: 5px; }
+        .btn-del { background: #500; color: #f00; border: 1px solid #f00; padding: 2px 6px; cursor: pointer; margin-left: 5px; }
         #game-status-box { font-size: 18px; font-weight: bold; padding: 10px; text-align: center; border: 2px solid #0f0; margin-bottom: 10px; }
         .sabo-warn { background: red; color: white; border-color: white; }
     </style>
@@ -50,9 +51,13 @@
             <div id="leaderboard"></div>
         </div>
 
-        <button class="btn" onclick="startGame()">START GAME & ROLLEN</button>
+        <div class="section">
+            Aantal Verraders: <input type="number" id="t-count-input" value="1" min="1" style="width: 50px;">
+            <button class="btn" onclick="startGame()">START GAME & ROLLEN</button>
+        </div>
+
         <button class="btn" style="background:red" onclick="triggerSabo()">FORCEER SABOTAGE</button>
-        <button class="btn" style="background:#222; color:#555" onclick="if(confirm('WIPE?')) db.ref().remove();">RESET GAME</button>
+        <button class="btn" style="background:#222; color:#555" onclick="hardReset()">RESET GAME (WIPE)</button>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -76,13 +81,23 @@
         db.ref().on('value', snap => {
             const data = snap.val() || {};
             const ps = data.players || {};
+            
+            // UI Elementen
             const qList = document.getElementById('queue-list');
             const pList = document.getElementById('posts-list');
             const lBoard = document.getElementById('leaderboard');
             const statusBox = document.getElementById('game-status-box');
             
             qList.innerHTML = ""; pList.innerHTML = ""; lBoard.innerHTML = "";
-            let lats = [], lngs = [], totalToyPoints = 0;
+            let lats = [], lngs = [];
+
+            // Als data leeg is (na reset), verwijder alle markers van de kaart
+            if (Object.keys(ps).length === 0) {
+                for (let id in markers) {
+                    map.removeLayer(markers[id]);
+                }
+                markers = {};
+            }
 
             // Status indicator
             if(data.game_settings?.sabotage?.active) {
@@ -99,13 +114,21 @@
             for(let id in ps) {
                 const p = ps[id];
                 if(p.state === 'pending') {
-                    qList.innerHTML += `<div class="q-item">${p.name} (${p.role}) <button onclick="approve('${id}')">OK</button></div>`;
+                    qList.innerHTML += `<div class="item-row">
+                        ${p.name} (${p.role}) 
+                        <div>
+                            <button onclick="approve('${id}')">OK</button>
+                            <button class="btn-del" onclick="removePlayer('${id}')">X</button>
+                        </div>
+                    </div>`;
                 } else {
                     if(p.role === 'post') {
-                        pList.innerHTML += `<div class="p-row">${p.name} <button onclick="db.ref('players/${id}').remove()">X</button></div>`;
+                        pList.innerHTML += `<div class="item-row">${p.name} <button class="btn-del" onclick="removePlayer('${id}')">X</button></div>`;
                     } else {
-                        if(p.role === 'toy') totalToyPoints += (p.points || 0);
-                        lBoard.innerHTML += `<div><span style="cursor:pointer; color:#0ff;" onclick="editPoints('${id}', ${p.points || 0})">${p.name}</span>: ${p.points || 0} (${p.role})</div>`;
+                        lBoard.innerHTML += `<div class="item-row">
+                            <span style="cursor:pointer; color:#0ff;" onclick="editPoints('${id}', ${p.points || 0})">${p.name}</span>: ${p.points || 0} (${p.role})
+                            <button class="btn-del" onclick="removePlayer('${id}')">X</button>
+                        </div>`;
                         lats.push(p.lat); lngs.push(p.lng);
                     }
                     
@@ -122,25 +145,43 @@
         });
 
         function approve(id) { db.ref('players/'+id).update({state: 'active'}); }
+        
+        function removePlayer(id) {
+            if(confirm("Verwijder " + id + " uit het spel?")) {
+                db.ref('players/' + id).remove();
+                if(markers[id]) {
+                    map.removeLayer(markers[id]);
+                    delete markers[id];
+                }
+            }
+        }
+
         function editPoints(id, current) {
             const nieuw = prompt("Pas score aan voor " + id + ":", current);
             if(nieuw !== null) db.ref('players/'+id+'/points').set(parseInt(nieuw));
         }
+
         function sendAnn() { 
             const msg = document.getElementById('ann-msg').value;
             const target = document.getElementById('ann-target').value;
             db.ref('game_settings/announcement').set({ msg, target, ts: Date.now() }); 
         }
+
         function startGame() {
+            const tCount = parseInt(document.getElementById('t-count-input').value) || 1;
             db.ref('players').once('value', s => {
                 let ids = [];
                 s.forEach(c => { if(c.val().state === 'active' && c.val().role !== 'post') ids.push(c.key); });
+                if(ids.length < tCount) return alert("Niet genoeg spelers voor " + tCount + " verraders!");
+                
                 ids.sort(()=>Math.random()-0.5).forEach((id, i) => {
-                    db.ref('players/'+id).update({role: i < 1 ? 'traitor' : 'toy'});
+                    db.ref('players/'+id).update({role: i < tCount ? 'traitor' : 'toy', status: 'alive'});
                 });
                 db.ref('game_settings/state').set('playing');
+                alert("Game Gestart met " + tCount + " verraders!");
             });
         }
+
         function triggerSabo() {
             if(!window.coords.lats.length) return;
             db.ref('game_settings/sabotage').set({
@@ -148,6 +189,15 @@
                 lat: window.coords.lats.reduce((a,b)=>a+b)/window.coords.lats.length,
                 lng: window.coords.lngs.reduce((a,b)=>a+b)/window.coords.lngs.length
             });
+        }
+
+        function hardReset() {
+            if(confirm("DIT WIST ALLES (Spelers, Posten, Locaties)! Weet je het zeker?")) {
+                db.ref().remove();
+                // Verwijder markers direct
+                for(let id in markers) { map.removeLayer(markers[id]); }
+                markers = {};
+            }
         }
     </script>
 </body>
