@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>SUNNYSIDE MASTER</title>
+    <title>SUNNYSIDE MASTER CONTROL</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
@@ -9,36 +9,31 @@
         body { margin: 0; background: #000; color: #0f0; font-family: monospace; display: flex; height: 100vh; }
         #map { flex-grow: 1; background: #111; }
         #sidebar { width: 350px; background: #0a0a0a; border-left: 2px solid #0f0; padding: 15px; overflow-y: auto; }
-        .btn { background: #0f0; color: #000; border: none; padding: 10px; width: 100%; cursor: pointer; font-weight: bold; margin-bottom: 10px; }
-        .section { border: 1px solid #333; padding: 10px; margin-bottom: 15px; }
-        .q-row { display: flex; justify-content: space-between; margin-bottom: 10px; background: #111; padding: 5px; border: 1px solid #333; }
-        .btn-s { font-size: 10px; padding: 5px; width: auto; margin: 0 2px; }
+        .btn { background: #0f0; color: #000; border: none; padding: 10px; width: 100%; cursor: pointer; font-weight: bold; margin-bottom: 10px; text-transform: uppercase; }
+        .section { border: 1px solid #333; padding: 10px; margin-bottom: 15px; background: #111; }
+        .q-item { border-bottom: 1px solid #333; padding: 10px 0; display: flex; justify-content: space-between; align-items: center; }
+        .tag { font-size: 10px; padding: 2px 5px; border-radius: 3px; background: #333; margin-right: 5px; }
     </style>
 </head>
 <body>
     <div id="map"></div>
     <div id="sidebar">
-        <h2>CORE CONTROL</h2>
-        <div id="sabo-status" class="section" style="color:red; display:none;">SABOTAGE ACTIEF!</div>
-        
+        <h2>MASTER CONTROL</h2>
         <div class="section">
-            <h3>WACHTRIJ (PENDING)</h3>
-            <div id="queue">Geen nieuwe aanmeldingen.</div>
+            <h3>WACHTRIJ</h3>
+            <div id="queue-list">Wachten op aanmeldingen...</div>
         </div>
-
         <div class="section">
-            <h3>SPEL CONTROL</h3>
+            <h3>GAME SETUP</h3>
             Verraders: <input type="number" id="t-count" value="1" style="width:40px; background:#000; color:#0f0; border:1px solid #0f0;">
-            <button class="btn" onclick="assignRoles()">START GAME & ROLLEN</button>
-            <button class="btn" style="background:red" onclick="triggerSabo()">FORCEER SABOTAGE</button>
+            <button class="btn" style="margin-top:10px" onclick="startGame()">START GAME & ROLLEN</button>
+            <button class="btn" style="background:red" onclick="triggerSabo()">SABOTAGE LICHTEN</button>
         </div>
-
         <div class="section">
             <h3>SCOREBORD</h3>
-            <div id="scores"></div>
+            <div id="leaderboard"></div>
         </div>
-
-        <button class="btn" style="background:#222; color:#555" onclick="if(confirm('WIPE?')) firebase.database().ref().remove(); location.reload();">RESET DATABASE</button>
+        <button class="btn" style="background:#222; color:#555" onclick="if(confirm('WIPE?')) firebase.database().ref().remove();">RESET GAME</button>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -57,60 +52,39 @@
 
         const map = L.map('map').setView([52.3, 5.0], 13);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
-        let markers = {}, saboMarker = null;
+        let markers = {};
 
         db.ref().on('value', snap => {
             const data = snap.val() || {};
             const ps = data.players || {};
-            const sab = data.game_settings?.sabotage;
-
-            // Render Wachtrij en Spelers
-            const qBox = document.getElementById('queue');
-            const sBox = document.getElementById('scores');
-            qBox.innerHTML = ""; sBox.innerHTML = "";
+            const qList = document.getElementById('queue-list');
+            const lBoard = document.getElementById('leaderboard');
+            
+            qList.innerHTML = ""; lBoard.innerHTML = "";
             let lats = [], lngs = [];
 
             for(let id in ps) {
                 const p = ps[id];
                 if(p.state === 'pending') {
-                    qBox.innerHTML += `<div class="q-row">${p.name} <div><button class="btn btn-s" onclick="approve('${id}','toy')">ALS SPELER</button><button class="btn btn-s" onclick="approve('${id}','post')">ALS POST</button></div></div>`;
+                    const typeLabel = p.role === 'post' ? 'POST' : 'SPELER';
+                    qList.innerHTML += `<div class="q-item"><span><span class="tag">${typeLabel}</span>${p.name}</span><button onclick="approve('${id}')">TOELATEN</button></div>`;
                 } else {
-                    sBox.innerHTML += `<div>${p.name}: ${p.points || 0} pnt (${p.role})</div>`;
+                    if(p.role !== 'post') {
+                        lBoard.innerHTML += `<div>${p.name}: ${p.points || 0}</div>`;
+                        lats.push(p.lat); lngs.push(p.lng);
+                    }
                     let col = p.role==='traitor' ? '#f0f' : (p.role==='post' ? '#ffa500' : '#0ff');
                     if(p.status==='dead') col='#555';
                     if(markers[id]) markers[id].setLatLng([p.lat, p.lng]).setStyle({color: col, fillColor: col});
                     else markers[id] = L.circleMarker([p.lat, p.lng], {color: col, radius: 8, fillOpacity: 0.8}).addTo(map).bindTooltip(p.name, {permanent:true});
-                    
-                    if(p.role !== 'post') { lats.push(p.lat); lngs.push(p.lng); }
                 }
             }
-
-            // Sabotage Logica (Alleen admin rekent dit uit)
-            if(sab?.active) {
-                document.getElementById('sabo-status').style.display = 'block';
-                if(!saboMarker) saboMarker = L.circleMarker([sab.lat, sab.lng], {color: 'yellow', radius: 25}).addTo(map);
-                
-                let fixers = 0;
-                for(let id in ps) {
-                    if(ps[id].state==='active' && ps[id].status==='alive' && dist(ps[id].lat, ps[id].lng, sab.lat, sab.lng) < 15) fixers++;
-                }
-                db.ref('game_settings/sabotage/fix_count').set(fixers);
-                if(fixers >= 3) {
-                    if(!sab.start_ts) db.ref('game_settings/sabotage/start_ts').set(Date.now());
-                    if(Date.now() - sab.start_ts > 60000) db.ref('game_settings/sabotage').remove();
-                } else {
-                    db.ref('game_settings/sabotage/start_ts').remove();
-                }
-            } else {
-                document.getElementById('sabo-status').style.display = 'none';
-                if(saboMarker) { map.removeLayer(saboMarker); saboMarker = null; }
-            }
-            window.activeCoords = {lats, lngs};
+            window.coords = {lats, lngs};
         });
 
-        function approve(id, role) { db.ref('players/'+id).update({state: 'active', role: role, points: 0, status: 'alive'}); }
+        function approve(id) { db.ref('players/'+id).update({state: 'active'}); }
         
-        function assignRoles() {
+        function startGame() {
             db.ref('players').once('value', s => {
                 let ids = [];
                 s.forEach(c => { if(c.val().state === 'active' && c.val().role !== 'post') ids.push(c.key); });
@@ -122,19 +96,12 @@
         }
 
         function triggerSabo() {
-            if(!window.activeCoords.lats.length) return alert("Geen actieve spelers!");
+            if(!window.coords.lats.length) return;
             db.ref('game_settings/sabotage').set({
                 active: true,
-                lat: window.activeCoords.lats.reduce((a,b)=>a+b)/window.activeCoords.lats.length,
-                lng: window.activeCoords.lngs.reduce((a,b)=>a+b)/window.activeCoords.lngs.length,
-                fix_count: 0
+                lat: window.coords.lats.reduce((a,b)=>a+b)/window.coords.lats.length,
+                lng: window.coords.lngs.reduce((a,b)=>a+b)/window.coords.lngs.length
             });
-        }
-
-        function dist(la1, lo1, la2, lo2) {
-            const R = 6371e3;
-            const a = Math.sin(((la2-la1)*Math.PI/180)/2)**2 + Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(((lo2-lo1)*Math.PI/180)/2)**2;
-            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
         }
     </script>
 </body>
