@@ -7,33 +7,26 @@
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
     <style>
-        body { background: #000; color: #0f0; font-family: monospace; text-align: center; margin: 0; padding: 0; overflow: hidden; }
+        body { background: #000; color: #0f0; font-family: monospace; text-align: center; margin: 0; overflow: hidden; }
         .screen { height: 100vh; display: flex; flex-direction: column; justify-content: center; padding: 20px; box-sizing: border-box; }
-        #radar-map { height: 200px; width: 100%; border: 1px solid #f0f; border-radius: 50%; display: none; }
+        #radar-map { height: 250px; width: 100%; border: 1px solid #f0f; border-radius: 50%; margin: 10px 0; display: none; }
         .btn { border: 2px solid #0f0; background: none; color: #0f0; padding: 15px; width: 100%; font-size: 16px; font-weight: bold; margin-top: 10px; }
-        .sabo-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,0,0,0.2); z-index: 100; border: 10px solid red; box-sizing: border-box; pointer-events: none; }
         .lights-out { filter: brightness(0.05); }
-        #announcement-box { display: none; position: fixed; top: 0; width: 100%; background: orange; color: black; padding: 20px; z-index: 1000; }
+        #sabo-alert { display: none; position: fixed; top: 0; width: 100%; background: red; color: white; padding: 10px; z-index: 100; font-weight: bold; }
+        #ann-box { display: none; position: fixed; top: 20%; left: 5%; width: 90%; background: orange; color: #000; padding: 20px; z-index: 1000; border: 5px solid white; }
     </style>
 </head>
 <body>
 
-    <div id="announcement-box">
-        <h2 id="ann-msg"></h2>
-        <button onclick="this.parentElement.style.display='none'">SLUITEN</button>
-    </div>
+    <div id="ann-box"><h2 id="ann-txt"></h2><button class="btn" style="border-color:black; color:black" onclick="this.parentElement.style.display='none'">OK</button></div>
+    <div id="sabo-alert">⚠️ LICHTEN UIT! GA NAAR FIX POINT ⚠️<br><span id="fix-dist"></span></div>
 
-    <div id="sabo-alert" class="sabo-overlay">
-        <h1 style="color:red; background:black; margin-top: 20%;">⚠️ LICHTEN UIT ⚠️</h1>
-        <p id="fix-dist" style="color:white; background:black;"></p>
-    </div>
-
-    <div id="game-ui" class="screen">
-        <h1 id="role-text">VERBINDEN...</h1>
-        <div id="points-display">Score: 0</div>
+    <div id="main-ui" class="screen">
+        <h1 id="role-text">LADEN...</h1>
+        <div id="points">Punten: 0</div>
         <div id="radar-map"></div>
         <button id="kill-btn" class="btn" style="border-color:#f0f; color:#f0f; display:none" onclick="doKill()">ELIMINEER</button>
-        <button id="sabo-btn" class="btn" style="border-color:red; color:red; display:none" onclick="triggerSabo()">SABOTAGE LICHTEN</button>
+        <button id="sabo-btn" class="btn" style="border-color:red; color:red; display:none" onclick="startSabo()">SABOTAGE LICHTEN</button>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -60,27 +53,7 @@
             myLat = p.coords.latitude; myLng = p.coords.longitude;
             db.ref('players/'+myName).update({lat: myLat, lng: myLng});
             if(radarMap) radarMap.panTo([myLat, myLng]);
-            checkKillAndSabo();
         }, null, {enableHighAccuracy:true});
-
-        function checkKillAndSabo() {
-            db.ref().once('value', snap => {
-                const data = snap.val();
-                const ps = data.players;
-                // Kill logic
-                let victim = null;
-                for(let id in ps) if(id!==myName && ps[id].status==='alive' && ps[id].role==='toy' && dist(myLat, myLng, ps[id].lat, ps[id].lng) < 10) victim = id;
-                document.getElementById('kill-btn').style.display = (myRole==='traitor' && victim) ? 'block' : 'none';
-                if(victim) document.getElementById('kill-btn').onclick = () => db.ref('players/'+victim).update({status:'dead'});
-
-                // Sabotage Fix logic
-                const sab = data.game_settings?.sabotage;
-                if(sab?.active) {
-                    const d = dist(myLat, myLng, sab.lat, sab.lng);
-                    db.ref('players/'+myName+'/is_fixing').set(d < 15);
-                }
-            });
-        }
 
         db.ref().on('value', snap => {
             const data = snap.val() || {};
@@ -88,38 +61,38 @@
             if(!me) return;
             myRole = me.role; myStatus = me.status;
 
-            document.getElementById('role-text').innerText = myRole.toUpperCase();
-            document.getElementById('points-display').innerText = "Score: " + (me.points || 0);
-            document.getElementById('sabo-btn').style.display = (myRole === 'traitor' && !data.game_settings?.sabotage?.active) ? 'block' : 'none';
+            document.getElementById('role-text').innerText = (me.state==='pending') ? "WACHT OP TOELATING" : myRole.toUpperCase();
+            document.getElementById('points').innerText = "Score: " + (me.points || 0);
 
-            // Announcements
-            if(data.game_settings?.announcement?.ts > lastAnn) {
-                document.getElementById('ann-msg').innerText = data.game_settings.announcement.msg;
-                document.getElementById('announcement-box').style.display = 'block';
-                lastAnn = data.game_settings.announcement.ts;
+            // Kill & Sabo Buttons
+            if(myRole === 'traitor' && myStatus === 'alive') {
+                document.getElementById('sabo-btn').style.display = data.game_settings?.sabotage?.active ? 'none' : 'block';
+                // Kill check
+                let vic = null;
+                for(let id in data.players) {
+                    let p = data.players[id];
+                    if(id!==myName && p.status==='alive' && p.role==='toy' && dist(myLat, myLng, p.lat, p.lng) < 10) vic = id;
+                }
+                document.getElementById('kill-btn').style.display = vic ? 'block' : 'none';
+                if(vic) document.getElementById('kill-btn').onclick = () => db.ref('players/'+vic).update({status:'dead'});
             }
 
             // Sabotage UI
             const sab = data.game_settings?.sabotage;
-            const alertBox = document.getElementById('sabo-alert');
             if(sab?.active) {
-                alertBox.style.display = 'block';
-                document.getElementById('game-ui').className = (myRole !== 'traitor') ? 'screen lights-out' : 'screen';
-                document.getElementById('fix-dist').innerText = `LOOP NAAR FIX POINT: ${dist(myLat, myLng, sab.lat, sab.lng).toFixed(0)}m\nStatus: ${sab.fix_count}/3 spelers`;
-                
-                // Sabotage Timer Logic (3 spelers nodig)
-                let fixers = 0;
-                for(let id in data.players) if(data.players[id].is_fixing) fixers++;
-                db.ref('game_settings/sabotage/fix_count').set(fixers);
-                if(fixers >= 3) {
-                    if(!sab.timer_start) db.ref('game_settings/sabotage/timer_start').set(Date.now());
-                    else if(Date.now() - sab.timer_start > 60000) db.ref('game_settings/sabotage').remove();
-                } else {
-                    db.ref('game_settings/sabotage/timer_start').remove();
-                }
+                document.getElementById('sabo-alert').style.display = 'block';
+                document.getElementById('fix-dist').innerText = `Afstand: ${dist(myLat, myLng, sab.lat, sab.lng).toFixed(0)}m | Fixers: ${sab.fix_count || 0}/3`;
+                if(myRole !== 'traitor') document.getElementById('main-ui').classList.add('lights-out');
             } else {
-                alertBox.style.display = 'none';
-                document.getElementById('game-ui').className = 'screen';
+                document.getElementById('sabo-alert').style.display = 'none';
+                document.getElementById('main-ui').classList.remove('lights-out');
+            }
+
+            // Announcements
+            if(data.game_settings?.announcement?.ts > lastAnn) {
+                document.getElementById('ann-txt').innerText = data.game_settings.announcement.msg;
+                document.getElementById('ann-box').style.display = 'block';
+                lastAnn = data.game_settings.announcement.ts;
             }
 
             // Radar
@@ -132,7 +105,7 @@
                 for(let id in data.players) {
                     const p = data.players[id];
                     if(p.state==='active' && p.status==='alive') {
-                        let c = id===myName ? 'lime' : (myRole==='traitor' ? 'red' : 'white');
+                        let c = (id===myName) ? 'lime' : (myRole==='traitor' ? 'red' : 'white');
                         if(markers[id]) markers[id].setLatLng([p.lat, p.lng]);
                         else markers[id] = L.circleMarker([p.lat, p.lng], {radius: 5, color: c}).addTo(radarMap);
                     }
@@ -140,11 +113,11 @@
             }
         });
 
-        function triggerSabo() {
+        function startSabo() {
             db.ref('players').once('value', s => {
                 let lats = [], lngs = [];
-                s.forEach(p => { if(p.val().state === 'active' && p.val().role !== 'post') { lats.push(p.val().lat); lngs.push(p.val().lng); }});
-                db.ref('game_settings/sabotage').set({ active: true, lat: lats.reduce((a,b)=>a+b)/lats.length, lng: lngs.reduce((a,b)=>a+b)/lngs.length, fix_count: 0 });
+                s.forEach(p => { if(p.val().state==='active' && p.val().role!=='post') { lats.push(p.val().lat); lngs.push(p.val().lng); } });
+                db.ref('game_settings/sabotage').set({ active: true, lat: lats.reduce((a,b)=>a+b)/lats.length, lng: lngs.reduce((a,b)=>a+b)/lngs.length });
             });
         }
 
