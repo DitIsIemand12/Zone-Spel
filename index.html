@@ -2,130 +2,106 @@
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-    <title>SUNNYSIDE HUB</title>
+    <title>SUNNYSIDE HUD</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
     <style>
-        body { background: #000; color: #0f0; font-family: monospace; text-align: center; margin: 0; padding: 20px; }
-        .screen { display: none; height: 100vh; flex-direction: column; justify-content: center; }
-        .btn { border: 2px solid #0f0; background: none; color: #0f0; padding: 20px; width: 100%; font-size: 18px; margin-top: 20px; font-weight: bold; }
-        .lights-out { filter: brightness(0.05); }
+        body { background: #000; color: #0f0; font-family: monospace; text-align: center; margin: 0; padding: 0; }
+        .screen { height: 100vh; display: flex; flex-direction: column; justify-content: center; padding: 20px; box-sizing: border-box; }
+        #radar-map { height: 250px; width: 100%; border: 1px solid #f0f; display: none; margin-top: 10px; }
+        .btn { border: 2px solid #0f0; background: none; color: #0f0; padding: 20px; width: 100%; font-size: 18px; font-weight: bold; margin-top: 20px; }
         #kill-btn { border-color: #f0f; color: #f0f; display: none; }
-        .wire { width: 80%; height: 40px; margin: 10px auto; border: 2px solid #fff; }
+        .lights-out { filter: brightness(0.05); }
     </style>
 </head>
 <body>
 
-    <!-- SCREEN 1: WAITING FOR APPROVAL -->
-    <div id="screen-pending" class="screen">
-        <h1>TOEGANG GEZOCHT...</h1>
-        <p>Wacht tot de spelleider je toelaat tot de missie.</p>
-        <div id="p-name-display"></div>
-    </div>
-
-    <!-- SCREEN 2: LOBBY -->
-    <div id="screen-lobby" class="screen">
-        <h1>IN DE LOBBY</h1>
-        <p>Je bent toegelaten! Wacht op de start van de game...</p>
-        <div style="font-size: 24px; animation: blink 1s infinite;">🛰️ VERBINDING STABIEL</div>
-    </div>
-
-    <!-- SCREEN 3: GAME HUD -->
-    <div id="screen-playing" class="screen" style="justify-content: space-between;">
-        <div>
-            <h1 id="role-text">INITIALISEREN</h1>
-            <div id="status-bar" style="font-size: 10px;">GPS: ZOAKEN...</div>
-        </div>
+    <div id="game-ui" class="screen">
+        <h1 id="role-text">VERBINDEN...</h1>
+        <div id="points-display">Punten: 0</div>
         
-        <div>
-            <button id="task-btn" class="btn" style="display:none;" onclick="openTask()">⚠️ OPDRACHT UITVOEREN</button>
-            <button id="kill-btn" class="btn" onclick="doKill()">ELIMINEER DOELWIT</button>
+        <div id="radar-container">
+            <p id="radar-label" style="display:none; color:#f0f; font-size: 10px;">TRAITOR RADAR (NO NAMES)</p>
+            <div id="radar-map"></div>
         </div>
 
-        <div id="traitor-panel" style="display:none; background: #200; padding: 10px;">
+        <button id="kill-btn" class="btn" onclick="doKill()">ELIMINEER DOELWIT</button>
+        
+        <div id="sabo-panel" style="display:none; margin-top: 20px;">
             <button onclick="sabo('lights')" style="color:red">SABOTAGE: LICHTEN</button>
-            <button onclick="sabo('none')" style="color:white">REPAREREN</button>
         </div>
     </div>
 
-    <!-- TASK MODAL -->
-    <div id="task-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:#000; z-index:100; flex-direction:column; justify-content:center;">
-        <h2 id="task-title">TAAK</h2>
-        <div id="task-content"></div>
-        <button onclick="document.getElementById('task-modal').style.display='none'" class="btn" style="border-color:gray; color:gray;">SLUITEN</button>
-    </div>
-
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        const firebaseConfig = {
-            apiKey: "AIzaSyAGvUwRjfQQ0QSh2S4n6mGf8k7sZlBggEs",
-            authDomain: "tradingpost-57b20.firebaseapp.com",
-            databaseURL: "https://tradingpost-57b20-default-rtdb.europe-west1.firebasedatabase.app",
-            projectId: "tradingpost-57b20",
-            storageBucket: "tradingpost-57b20.firebasestorage.app",
-            messagingSenderId: "358205969306",
-            appId: "1:358205969306:web:b0440ef5815a21d5fca023"
-        };
+        const firebaseConfig = { /* JOUW CONFIG HIER */ };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
 
-        let myName = localStorage.getItem('pName') || prompt("Wat is je naam?");
+        let myName = localStorage.getItem('pName') || prompt("Naam?");
         localStorage.setItem('pName', myName);
-        document.getElementById('p-name-display').innerText = "Naam: " + myName;
 
-        let myLat, myLng, myRole, myStatus, currentVictim = null;
+        let myLat, myLng, myRole, myStatus, victimId = null;
+        let radarMap, radarMarkers = {};
 
-        // Aanmelden in de wachtrij
-        db.ref('players/' + myName).transaction(currentData => {
-            if (currentData === null) {
-                return { name: myName, state: 'pending', role: 'toy', status: 'alive', lat: 52, lng: 5 };
-            }
-        });
-
-        // GPS Start
+        // GPS & Aanmelden
+        db.ref('players/'+myName).update({name: myName, state: 'pending', status:'alive', role:'toy', lat:52, lng:5});
+        
         navigator.geolocation.watchPosition(p => {
             myLat = p.coords.latitude; myLng = p.coords.longitude;
-            db.ref('players/' + myName).update({ lat: myLat, lng: myLng });
-            checkTriggers();
+            db.ref('players/'+myName).update({lat: myLat, lng: myLng});
+            if(radarMap) radarMap.panTo([myLat, myLng]);
+            checkKill();
         }, null, {enableHighAccuracy:true});
 
-        function checkTriggers() {
-            db.ref().once('value', snap => {
-                const data = snap.val() || {};
-                const ts = data.tasks || {};
-                let nearT = null;
-                for(let id in ts) {
-                    if(dist(myLat, myLng, ts[id].lat, ts[id].lng) < 15) { nearT = ts[id]; break; }
-                }
-                const tb = document.getElementById('task-btn');
-                tb.style.display = nearT ? 'block' : 'none';
-                if(nearT) { tb.innerText = "START: " + nearT.name; tb.onclick = () => openTask(nearT); }
-
-                if(myRole === 'traitor' && myStatus === 'alive') {
-                    currentVictim = null;
-                    const ps = data.players || {};
-                    for(let id in ps) {
-                        if(id !== myName && ps[id].status === 'alive' && ps[id].state === 'active' && dist(myLat, myLng, ps[id].lat, ps[id].lng) < 10) {
-                            currentVictim = id; break;
-                        }
+        function checkKill() {
+            db.ref('players').once('value', snap => {
+                const ps = snap.val(); victimId = null;
+                for(let id in ps) {
+                    if(id !== myName && ps[id].status === 'alive' && ps[id].role !== 'traitor' && dist(myLat, myLng, ps[id].lat, ps[id].lng) < 10) {
+                        victimId = id; break;
                     }
-                    document.getElementById('kill-btn').style.display = currentVictim ? 'block' : 'none';
                 }
+                document.getElementById('kill-btn').style.display = (myRole === 'traitor' && victimId) ? 'block' : 'none';
             });
         }
 
-        function openTask(task) {
-            document.getElementById('task-modal').style.display = 'flex';
-            document.getElementById('task-title').innerText = task.name;
-            document.getElementById('task-content').innerHTML = `
-                <p>Koppel de draden (Tap in volgorde)</p>
-                <div class="wire" style="background:red" onclick="this.style.opacity=0.2"></div>
-                <div class="wire" style="background:blue" onclick="this.style.opacity=0.2"></div>
-                <div class="wire" style="background:yellow" onclick="this.style.opacity=0.2; setTimeout(finishTask, 500)"></div>
-            `;
-        }
-        function finishTask() { alert("TAAK KLAAR!"); document.getElementById('task-modal').style.display='none'; }
-        function doKill() { if(currentVictim) db.ref('players/'+currentVictim).update({status:'dead'}); }
+        function doKill() { if(victimId) db.ref('players/'+victimId).update({status:'dead'}); }
         function sabo(t) { db.ref('game_settings/sabotage').set({active: t!=='none', type: t}); }
+
+        // Database Sync
+        db.ref().on('value', snap => {
+            const data = snap.val() || {};
+            const me = data.players[myName];
+            if(!me) return;
+
+            myRole = me.role; myStatus = me.status;
+            document.getElementById('role-text').innerText = myRole.toUpperCase();
+            document.getElementById('points-display').innerText = "Punten: " + (me.points || 0);
+            
+            if(myStatus === 'dead') document.body.style.filter = "grayscale(1) brightness(0.2)";
+
+            // Traitor Radar
+            if(myRole === 'traitor' && myStatus === 'alive') {
+                document.getElementById('radar-map').style.display = 'block';
+                document.getElementById('radar-label').style.display = 'block';
+                document.getElementById('sabo-panel').style.display = 'block';
+                if(!radarMap) {
+                    radarMap = L.map('radar-map', {zoomControl: false}).setView([myLat, myLng], 17);
+                    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(radarMap);
+                }
+                // Update markers zonder namen
+                for(let id in data.players) {
+                    const p = data.players[id];
+                    if(p.state === 'active' && p.status === 'alive') {
+                        if(radarMarkers[id]) radarMarkers[id].setLatLng([p.lat, p.lng]);
+                        else radarMarkers[id] = L.circleMarker([p.lat, p.lng], {radius: 5, color: id === myName ? 'lime' : 'red'}).addTo(radarMap);
+                    }
+                }
+            }
+        });
+
         function dist(la1, lo1, la2, lo2) {
             const R = 6371e3;
             const dLat = (la2-la1) * Math.PI/180;
@@ -133,26 +109,6 @@
             const a = Math.sin(dLat/2)**2 + Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dLon/2)**2;
             return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
         }
-
-        // UI Manager
-        db.ref().on('value', snap => {
-            const data = snap.val() || {};
-            const me = data.players?.[myName];
-            if(!me) return;
-
-            // Schermen schakelen
-            document.getElementById('screen-pending').style.display = me.state === 'pending' ? 'flex' : 'none';
-            document.getElementById('screen-lobby').style.display = (me.state === 'active' && data.game_settings?.state !== 'playing') ? 'flex' : 'none';
-            document.getElementById('screen-playing').style.display = (me.state === 'active' && data.game_settings?.state === 'playing') ? 'flex' : 'none';
-
-            myRole = me.role; myStatus = me.status;
-            document.getElementById('role-text').innerText = myRole.toUpperCase();
-            document.getElementById('traitor-panel').style.display = myRole === 'traitor' ? 'block' : 'none';
-            if(myStatus === 'dead') { document.body.style.filter = "grayscale(1) brightness(0.3)"; }
-            
-            const s = data.game_settings?.sabotage;
-            document.getElementById('screen-playing').className = (s?.active && s?.type === 'lights' && myRole !== 'traitor') ? 'screen lights-out' : 'screen';
-        });
     </script>
 </body>
 </html>
