@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>POST CONTROL</title>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
+    <style>
+        body { background: #111; color: orange; font-family: monospace; padding: 20px; text-align: center; }
+        .player-box { background: #222; border: 1px solid orange; padding: 15px; margin-bottom: 10px; border-radius: 10px; }
+        .btn-plus { background: #0f0; color: #000; border: none; padding: 10px 20px; font-weight: bold; font-size: 20px; margin: 5px; }
+    </style>
+</head>
+<body>
+    <h2>POST COMMANDER</h2>
+    <p>Spelers in de buurt (15m):</p>
+    <div id="nearby-list">Zoeken naar spelers...</div>
+
+    <script>
+        const firebaseConfig = { /* JOUW CONFIG HIER */ };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        let myLat, myLng;
+        navigator.geolocation.watchPosition(p => {
+            myLat = p.coords.latitude; myLng = p.coords.longitude;
+        }, null, {enableHighAccuracy:true});
+
+        db.ref('players').on('value', snap => {
+            const ps = snap.val();
+            const list = document.getElementById('nearby-list');
+            list.innerHTML = "";
+            
+            for(let id in ps) {
+                const p = ps[id];
+                if(p.state === 'active' && p.status === 'alive') {
+                    const d = dist(myLat, myLng, p.lat, p.lng);
+                    if(d < 15) {
+                        list.innerHTML += `
+                            <div class="player-box">
+                                <b>${p.name}</b> (Score: ${p.points || 0})<br>
+                                <button class="btn-plus" onclick="addPoints('${id}', 10)">+10</button>
+                                <button class="btn-plus" onclick="addPoints('${id}', 50)">+50</button>
+                            </div>`;
+                    }
+                }
+            }
+        });
+
+        function addPoints(id, amt) {
+            db.ref('players/'+id+'/points').transaction(p => (p || 0) + amt);
+        }
+
+        function dist(la1, lo1, la2, lo2) {
+            const R = 6371e3;
+            const dLat = (la2-la1) * Math.PI/180;
+            const dLon = (lo2-lo1) * Math.PI/180;
+            const a = Math.sin(dLat/2)**2 + Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dLon/2)**2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+    </script>
+</body>
+</html>
