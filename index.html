@@ -11,7 +11,6 @@
         .screen { height: 100vh; display: flex; flex-direction: column; justify-content: center; padding: 20px; box-sizing: border-box; }
         #radar-map { height: 280px; width: 100%; border: 2px solid #333; border-radius: 50%; margin: 15px 0; display: block; }
         .btn { border: 2px solid #0f0; background: none; color: #0f0; padding: 15px; width: 100%; font-size: 16px; font-weight: bold; margin-top: 10px; }
-        .btn:disabled { border-color: #333; color: #333; }
         #ann-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; background: orange; color: #000; padding: 15px; z-index: 1000; font-weight: bold; }
         #sabo-warn-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; background: red; color: white; padding: 10px; z-index: 1001; font-weight: bold; }
         .lights-out { filter: brightness(0.05); }
@@ -19,16 +18,15 @@
 </head>
 <body>
     <div id="ann-overlay"><span id="ann-text"></span> <button onclick="this.parentElement.style.display='none'">X</button></div>
-    <div id="sabo-warn-overlay">⚠️ SABOTAGE ACTIEF: LICHTEN UIT! ⚠️</div>
+    <div id="sabo-warn-overlay">⚠️ SABOTAGE ACTIEF! ⚠️</div>
 
     <div id="ui" class="screen">
         <h1 id="status-text">LADEN...</h1>
         <div id="points">Score: 0</div>
         <div id="radar-map"></div>
-        
         <div id="traitor-controls" style="display:none;">
             <button id="kill-btn" class="btn" style="color:#f0f; border-color:#f0f;">KILL</button>
-            <button id="sabo-btn-hud" class="btn" style="color:red; border-color:red;" onclick="triggerSaboLocal()">SABOTAGE STARTEN</button>
+            <button id="sabo-btn-hud" class="btn" style="color:red; border-color:red;" onclick="triggerSaboLocal()">SABOTAGE</button>
         </div>
     </div>
 
@@ -68,10 +66,18 @@
 
         db.ref().on('value', snap => {
             const data = snap.val() || {};
-            const me = data.players?.[myName];
-            if(!me) return;
+            const players = data.players || {};
+            const me = players[myName];
+            
+            // Wipe markers als data leeg is
+            if(Object.keys(players).length === 0) {
+                for(let id in markers) { if(radarMap) radarMap.removeLayer(markers[id]); }
+                markers = {};
+            }
 
+            if(!me) { document.getElementById('status-text').innerText = "VERBINDEN..."; return; }
             if(me.state === 'pending') { document.getElementById('status-text').innerText = "WACHT OP TOELATING..."; return; }
+            
             myRole = me.role; myStatus = me.status;
             document.getElementById('status-text').innerText = myRole.toUpperCase();
             document.getElementById('points').innerText = "Score: " + (me.points || 0);
@@ -79,17 +85,6 @@
             // Sabotage Melding
             const isSabo = data.game_settings?.sabotage?.active;
             document.getElementById('sabo-warn-overlay').style.display = isSabo ? 'block' : 'none';
-            if(myRole === 'traitor') document.getElementById('sabo-btn-hud').disabled = isSabo;
-
-            // Omroepen
-            const ann = data.game_settings?.announcement;
-            if(ann && ann.ts > lastAnn) {
-                if(ann.target === 'all' || ann.target === myRole || (ann.target === 'player' && myRole !== 'post')) {
-                    document.getElementById('ann-text').innerText = ann.msg;
-                    document.getElementById('ann-overlay').style.display = 'block';
-                }
-                lastAnn = ann.ts;
-            }
 
             // Radar
             if(data.game_settings?.state === 'playing') {
@@ -97,8 +92,8 @@
                     radarMap = L.map('radar-map', {zoomControl:false, attributionControl:false}).setView([myLat, myLng], 18);
                     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(radarMap);
                 }
-                for(let id in data.players) {
-                    const p = data.players[id];
+                for(let id in players) {
+                    const p = players[id];
                     if(p.state !== 'active' || p.status === 'dead') {
                         if(markers[id]) { radarMap.removeLayer(markers[id]); delete markers[id]; }
                         continue;
@@ -115,14 +110,14 @@
                         else markers[id] = L.circleMarker([p.lat, p.lng], {radius:6, color:col, fillOpacity:0.8}).addTo(radarMap);
                     }
                 }
-                // Kill Logic
+                // Kill logic (Traitors)
                 if(myRole === 'traitor') {
                     document.getElementById('traitor-controls').style.display = 'block';
                     let vic = null;
-                    for(let id in data.players) if(id!==myName && data.players[id].role==='toy' && data.players[id].status==='alive' && dist(myLat,myLng,data.players[id].lat,data.players[id].lng) < 10) vic = id;
+                    for(let id in players) if(id!==myName && players[id].role==='toy' && players[id].status==='alive' && dist(myLat,myLng,players[id].lat,players[id].lng) < 10) vic = id;
                     const kb = document.getElementById('kill-btn');
                     if(vic) {
-                        kb.innerText = "KILL: " + data.players[vic].name; kb.disabled = false;
+                        kb.innerText = "KILL: " + players[vic].name; kb.disabled = false;
                         kb.onclick = () => {
                             db.ref('players/'+vic).update({status:'dead'});
                             db.ref('players/'+myName+'/points').transaction(p => (p||0) + (data.game_settings?.kill_reward || 50));
