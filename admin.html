@@ -12,7 +12,7 @@
         .btn { background: #0f0; color: #000; border: none; padding: 10px; width: 100%; cursor: pointer; font-weight: bold; margin-bottom: 10px; text-transform: uppercase; }
         .section { border: 1px solid #333; padding: 10px; margin-bottom: 15px; background: #111; }
         .q-item { border-bottom: 1px solid #333; padding: 10px 0; display: flex; justify-content: space-between; align-items: center; }
-        input { background: #000; color: #0f0; border: 1px solid #0f0; padding: 5px; margin-bottom: 5px; width: 50px; }
+        input, select { background: #000; color: #0f0; border: 1px solid #0f0; padding: 5px; margin-bottom: 5px; }
         .clickable-name { cursor: pointer; text-decoration: underline; color: #0ff; }
         #total-score { font-size: 18px; color: yellow; margin-bottom: 10px; }
     </style>
@@ -24,7 +24,14 @@
         
         <div class="section">
             <h3>📢 OMROEPEN</h3>
-            <input type="text" id="ann-msg" style="width:70%">
+            <select id="ann-target" style="width:100%">
+                <option value="all">Iedereen</option>
+                <option value="player">Alle Spelers (Toys + Traitors)</option>
+                <option value="toy">Alleen Toys</option>
+                <option value="traitor">Alleen Verraders</option>
+                <option value="post">Alleen Posten</option>
+            </select>
+            <input type="text" id="ann-msg" style="width:70%" placeholder="Typ bericht...">
             <button class="btn" style="width:25%; display:inline;" onclick="sendAnn()">OK</button>
         </div>
 
@@ -71,10 +78,7 @@
             const ps = data.players || {};
             const qList = document.getElementById('queue-list');
             const lBoard = document.getElementById('leaderboard');
-            const killValInput = document.getElementById('kill-val');
             
-            if(data.game_settings?.kill_reward) killValInput.value = data.game_settings.kill_reward;
-
             qList.innerHTML = ""; lBoard.innerHTML = "";
             let lats = [], lngs = [], totalToyPoints = 0;
 
@@ -88,10 +92,18 @@
                         lBoard.innerHTML += `<div><span class="clickable-name" onclick="editPoints('${id}', ${p.points || 0})">${p.name}</span>: ${p.points || 0} (${p.role})</div>`;
                         lats.push(p.lat); lngs.push(p.lng);
                     }
-                    let col = p.role==='traitor' ? '#f0f' : (p.role==='post' ? '#ffa500' : '#0ff');
-                    if(p.status==='dead') col='#555';
-                    if(markers[id]) markers[id].setLatLng([p.lat, p.lng]).setStyle({color: col, fillColor: col});
-                    else markers[id] = L.circleMarker([p.lat, p.lng], {color: col, radius: 8, fillOpacity: 0.8}).addTo(map).bindTooltip(p.name, {permanent:true});
+                    
+                    // ADMIN KLEUREN: Geel (Post), Roze (Traitor), Groen (Toy)
+                    let col = '#0f0'; // Toy = Groen
+                    if(p.role === 'traitor') col = '#f0f'; // Traitor = Roze
+                    if(p.role === 'post') col = '#ff0'; // Post = Geel
+                    if(p.status === 'dead') col = '#555';
+
+                    if(markers[id]) {
+                        markers[id].setLatLng([p.lat, p.lng]).setStyle({color: col, fillColor: col});
+                    } else {
+                        markers[id] = L.circleMarker([p.lat, p.lng], {color: col, radius: 8, fillOpacity: 0.8}).addTo(map).bindTooltip(p.name, {permanent:true});
+                    }
                 }
             }
             document.getElementById('total-score').innerText = "Totaal Toys: " + totalToyPoints;
@@ -100,23 +112,25 @@
 
         function approve(id) { db.ref('players/'+id).update({state: 'active'}); }
         function editPoints(id, current) {
-            const nieuw = prompt("Nieuwe score voor deze speler:", current);
+            const nieuw = prompt("Score voor " + id + ":", current);
             if(nieuw !== null) db.ref('players/'+id+'/points').set(parseInt(nieuw));
         }
-        function sendAnn() { db.ref('game_settings/announcement').set({ msg: document.getElementById('ann-msg').value, ts: Date.now() }); }
+        function sendAnn() { 
+            const msg = document.getElementById('ann-msg').value;
+            const target = document.getElementById('ann-target').value;
+            db.ref('game_settings/announcement').set({ msg, target, ts: Date.now() }); 
+        }
         function updateKillVal(val) { db.ref('game_settings/kill_reward').set(parseInt(val)); }
-        
         function startGame() {
             db.ref('players').once('value', s => {
                 let ids = [];
                 s.forEach(c => { if(c.val().state === 'active' && c.val().role !== 'post') ids.push(c.key); });
                 ids.sort(()=>Math.random()-0.5).forEach((id, i) => {
-                    db.ref('players/'+id).update({role: i < 1 ? 'traitor' : 'toy'}); // Standaard 1 verrader
+                    db.ref('players/'+id).update({role: i < 1 ? 'traitor' : 'toy'});
                 });
                 db.ref('game_settings/state').set('playing');
             });
         }
-
         function triggerSabo() {
             if(!window.coords.lats.length) return;
             db.ref('game_settings/sabotage').set({
