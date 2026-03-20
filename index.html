@@ -9,9 +9,8 @@
     <style>
         body { background: #000; color: #0f0; font-family: monospace; text-align: center; margin: 0; overflow: hidden; }
         .screen { height: 100vh; display: flex; flex-direction: column; justify-content: center; padding: 20px; box-sizing: border-box; }
-        #radar-map { height: 250px; width: 100%; border: 1px solid #f0f; border-radius: 50%; margin: 15px 0; display: none; }
+        #radar-map { height: 280px; width: 100%; border: 2px solid #333; border-radius: 50%; margin: 15px 0; display: block; }
         .btn { border: 2px solid #0f0; background: none; color: #0f0; padding: 15px; width: 100%; font-size: 16px; font-weight: bold; margin-top: 10px; }
-        .btn:disabled { border-color: #333; color: #333; }
         #ann-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; background: orange; color: #000; padding: 15px; z-index: 1000; font-weight: bold; }
         .lights-out { filter: brightness(0.05); }
     </style>
@@ -25,8 +24,8 @@
         <div id="radar-map"></div>
         
         <div id="traitor-controls" style="display:none;">
-            <button id="kill-btn" class="btn" style="color:#f0f; border-color:#f0f;">ELIMINEER (BUITEN BEREIK)</button>
-            <button class="btn" style="color:red; border-color:red;" onclick="triggerSaboLocal()">SABOTAGE LICHTEN</button>
+            <button id="kill-btn" class="btn" style="color:#f0f; border-color:#f0f;">KILL</button>
+            <button class="btn" style="color:red; border-color:red;" onclick="triggerSaboLocal()">SABOTAGE</button>
         </div>
     </div>
 
@@ -68,44 +67,69 @@
             document.getElementById('status-text').innerText = myRole.toUpperCase();
             document.getElementById('points').innerText = "Score: " + (me.points || 0);
 
-            // Meldingen
-            if(data.game_settings?.announcement?.ts > lastAnn) {
-                document.getElementById('ann-text').innerText = data.game_settings.announcement.msg;
-                document.getElementById('ann-overlay').style.display = 'block';
-                lastAnn = data.game_settings.announcement.ts;
+            // Geselecteerde meldingen
+            const ann = data.game_settings?.announcement;
+            if(ann && ann.ts > lastAnn) {
+                let show = false;
+                if(ann.target === 'all') show = true;
+                if(ann.target === 'player' && (myRole === 'toy' || myRole === 'traitor')) show = true;
+                if(ann.target === myRole) show = true;
+                
+                if(show) {
+                    document.getElementById('ann-text').innerText = ann.msg;
+                    document.getElementById('ann-overlay').style.display = 'block';
+                }
+                lastAnn = ann.ts;
             }
 
-            // Traitor Radar & Kill
-            if(myRole === 'traitor' && data.game_settings?.state === 'playing') {
-                document.getElementById('radar-map').style.display = 'block';
-                document.getElementById('traitor-controls').style.display = 'block';
+            // Radar Logica
+            if(data.game_settings?.state === 'playing') {
                 if(!radarMap) {
                     radarMap = L.map('radar-map', {zoomControl:false, attributionControl:false}).setView([myLat, myLng], 18);
                     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(radarMap);
                 }
+                
                 for(let id in data.players) {
                     const p = data.players[id];
-                    if(p.state === 'active' && p.status === 'alive') {
-                        let c = id === myName ? 'lime' : 'red';
-                        if(markers[id]) markers[id].setLatLng([p.lat, p.lng]);
-                        else markers[id] = L.circleMarker([p.lat, p.lng], {radius:5, color:c}).addTo(radarMap);
+                    if(p.state !== 'active' || p.status === 'dead') {
+                        if(markers[id]) { radarMap.removeLayer(markers[id]); delete markers[id]; }
+                        continue;
+                    }
+
+                    let col = null;
+                    // Verrader Radar Regels
+                    if(myRole === 'traitor') {
+                        if(p.role === 'post') continue; // Verraders zien posten niet
+                        if(id === myName) col = 'blue';
+                        else if(p.role === 'traitor') col = 'pink';
+                        else col = 'green';
+                    } 
+                    // Toy Radar Regels
+                    else if(myRole === 'toy') {
+                        if(id === myName) col = 'blue';
+                        else if(p.role === 'post') col = 'yellow';
+                        else col = 'green';
+                    }
+
+                    if(col) {
+                        if(markers[id]) markers[id].setLatLng([p.lat, p.lng]).setStyle({color: col, fillColor: col});
+                        else markers[id] = L.circleMarker([p.lat, p.lng], {radius:6, color:col, fillOpacity:0.8}).addTo(radarMap);
                     }
                 }
-                // Kill logic
-                let vic = null;
-                for(let id in data.players) if(id!==myName && data.players[id].role==='toy' && data.players[id].status==='alive' && dist(myLat,myLng,data.players[id].lat,data.players[id].lng) < 10) vic = id;
-                const kb = document.getElementById('kill-btn');
-                if(vic) {
-                    kb.innerText = "ELIMINEER " + data.players[vic].name;
-                    kb.disabled = false;
-                    kb.onclick = () => {
-                        db.ref('players/'+vic).update({status:'dead'});
-                        const reward = data.game_settings?.kill_reward || 50;
-                        db.ref('players/'+myName+'/points').transaction(p => (p||0) + reward);
-                    };
-                } else {
-                    kb.innerText = "ELIMINEER (BUITEN BEREIK)";
-                    kb.disabled = true;
+
+                if(myRole === 'traitor') {
+                    document.getElementById('traitor-controls').style.display = 'block';
+                    let vic = null;
+                    for(let id in data.players) if(id!==myName && data.players[id].role==='toy' && data.players[id].status==='alive' && dist(myLat,myLng,data.players[id].lat,data.players[id].lng) < 10) vic = id;
+                    const kb = document.getElementById('kill-btn');
+                    if(vic) {
+                        kb.innerText = "KILL: " + data.players[vic].name; kb.disabled = false;
+                        kb.onclick = () => {
+                            db.ref('players/'+vic).update({status:'dead'});
+                            const rew = data.game_settings?.kill_reward || 50;
+                            db.ref('players/'+myName+'/points').transaction(p => (p||0) + rew);
+                        };
+                    } else { kb.innerText = "ZOEK TOY..."; kb.disabled = true; }
                 }
             }
 
