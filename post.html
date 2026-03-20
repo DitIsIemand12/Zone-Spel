@@ -39,6 +39,8 @@
         let myName = localStorage.getItem('pName') || prompt("Naam van deze post?");
         localStorage.setItem('pName', myName);
         let myLat, myLng, radar, markers = {}, lastAnn = 0;
+        let lastUpdateTime = 0;
+        const throttleTime = 4000;
 
         db.ref('players/'+myName).once('value', s => {
             if(!s.exists()) db.ref('players/'+myName).set({name: myName, state: 'pending', role: 'post', lat: 52, lng: 5});
@@ -46,14 +48,18 @@
 
         navigator.geolocation.watchPosition(p => {
             myLat = p.coords.latitude; myLng = p.coords.longitude;
-            db.ref('players/'+myName).update({lat: myLat, lng: myLng});
+            
+            const nu = Date.now();
+            if (nu - lastUpdateTime > throttleTime) {
+                db.ref('players/'+myName).update({lat: myLat, lng: myLng});
+                lastUpdateTime = nu;
+            }
+
             if(radar) radar.panTo([myLat, myLng]);
         }, null, {enableHighAccuracy:true});
 
         db.ref().on('value', snap => {
             const data = snap.val() || {};
-            
-            // Meldingen voor Post
             const ann = data.game_settings?.announcement;
             if(ann && ann.ts > lastAnn) {
                 if(ann.target === 'all' || ann.target === 'post') {
