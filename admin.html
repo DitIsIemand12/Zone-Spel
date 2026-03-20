@@ -1,37 +1,44 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>SUNNYSIDE - MASTER COMMAND</title>
+    <title>SUNNYSIDE MASTER</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
     <style>
-        body { margin: 0; background: #000; color: #0f0; font-family: monospace; display: flex; height: 100vh; overflow: hidden; }
+        body { margin: 0; background: #000; color: #0f0; font-family: monospace; display: flex; height: 100vh; }
         #map { flex-grow: 1; background: #111; }
         #sidebar { width: 350px; background: #0a0a0a; border-left: 2px solid #0f0; padding: 15px; overflow-y: auto; }
         .btn { background: #0f0; color: #000; border: none; padding: 10px; width: 100%; cursor: pointer; font-weight: bold; margin-bottom: 10px; }
         .section { border: 1px solid #333; padding: 10px; margin-bottom: 15px; }
-        .sabo-box { background: #300; border: 1px solid red; padding: 10px; color: #f00; }
+        .q-row { display: flex; justify-content: space-between; margin-bottom: 10px; background: #111; padding: 5px; border: 1px solid #333; }
+        .btn-s { font-size: 10px; padding: 5px; width: auto; margin: 0 2px; }
     </style>
 </head>
 <body>
     <div id="map"></div>
     <div id="sidebar">
         <h2>CORE CONTROL</h2>
-        <div id="sabo-monitor" class="section">Geen Sabotage</div>
+        <div id="sabo-status" class="section" style="color:red; display:none;">SABOTAGE ACTIEF!</div>
+        
         <div class="section">
-            <h3>OMROEPEN</h3>
-            <input type="text" id="ann-msg" style="width:100%; margin-bottom:5px;">
-            <button class="btn" onclick="sendAnn()">VERSTUUR BERICHT</button>
+            <h3>WACHTRIJ (PENDING)</h3>
+            <div id="queue">Geen nieuwe aanmeldingen.</div>
         </div>
+
         <div class="section">
-            <h3>GAME SETUP</h3>
-            Verraders: <input type="number" id="t-count" value="1" style="width:40px">
-            <button class="btn" onclick="assignRoles()">START GAME</button>
-            <button class="btn" style="background:red" onclick="startSabo()">FORCEER SABOTAGE</button>
+            <h3>SPEL CONTROL</h3>
+            Verraders: <input type="number" id="t-count" value="1" style="width:40px; background:#000; color:#0f0; border:1px solid #0f0;">
+            <button class="btn" onclick="assignRoles()">START GAME & ROLLEN</button>
+            <button class="btn" style="background:red" onclick="triggerSabo()">FORCEER SABOTAGE</button>
         </div>
-        <div id="leaderboard" class="section"></div>
-        <button class="btn" style="background:#222; color:#555" onclick="db.ref().remove()">HARD RESET</button>
+
+        <div class="section">
+            <h3>SCOREBORD</h3>
+            <div id="scores"></div>
+        </div>
+
+        <button class="btn" style="background:#222; color:#555" onclick="if(confirm('WIPE?')) firebase.database().ref().remove(); location.reload();">RESET DATABASE</button>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -57,72 +64,52 @@
             const ps = data.players || {};
             const sab = data.game_settings?.sabotage;
 
-            // 1. Render Spelers & Bereken Sabotage Logica (ALLEEN DOOR ADMIN)
-            let fixersCount = 0;
-            let activeLats = [], activeLngs = [];
-            let scores = [];
+            // Render Wachtrij en Spelers
+            const qBox = document.getElementById('queue');
+            const sBox = document.getElementById('scores');
+            qBox.innerHTML = ""; sBox.innerHTML = "";
+            let lats = [], lngs = [];
 
             for(let id in ps) {
                 const p = ps[id];
-                if(p.state === 'active') {
-                    if(p.role !== 'post') {
-                        activeLats.push(p.lat); activeLngs.push(p.lng);
-                        scores.push({name: p.name, pts: p.points || 0});
-                    }
-                    
-                    // Markering op kaart
-                    let col = p.role === 'traitor' ? '#f0f' : (p.role === 'post' ? '#ffa500' : '#0ff');
-                    if(p.status === 'dead') col = '#555';
+                if(p.state === 'pending') {
+                    qBox.innerHTML += `<div class="q-row">${p.name} <div><button class="btn btn-s" onclick="approve('${id}','toy')">ALS SPELER</button><button class="btn btn-s" onclick="approve('${id}','post')">ALS POST</button></div></div>`;
+                } else {
+                    sBox.innerHTML += `<div>${p.name}: ${p.points || 0} pnt (${p.role})</div>`;
+                    let col = p.role==='traitor' ? '#f0f' : (p.role==='post' ? '#ffa500' : '#0ff');
+                    if(p.status==='dead') col='#555';
                     if(markers[id]) markers[id].setLatLng([p.lat, p.lng]).setStyle({color: col, fillColor: col});
                     else markers[id] = L.circleMarker([p.lat, p.lng], {color: col, radius: 8, fillOpacity: 0.8}).addTo(map).bindTooltip(p.name, {permanent:true});
-
-                    // Tellen fixers voor sabotage
-                    if(sab?.active && dist(p.lat, p.lng, sab.lat, sab.lng) < 15 && p.status === 'alive') fixersCount++;
+                    
+                    if(p.role !== 'post') { lats.push(p.lat); lngs.push(p.lng); }
                 }
             }
 
-            // 2. Sabotage Update (Admin schrijft als enige naar deze node)
-            const monitor = document.getElementById('sabo-monitor');
+            // Sabotage Logica (Alleen admin rekent dit uit)
             if(sab?.active) {
-                monitor.innerHTML = `<div class="sabo-box">SABOTAGE ACTIEF<br>Mensen op punt: ${fixersCount}/3</div>`;
-                if(!saboMarker) saboMarker = L.circleMarker([sab.lat, sab.lng], {color: 'yellow', radius: 20}).addTo(map).bindTooltip("FIX POINT");
+                document.getElementById('sabo-status').style.display = 'block';
+                if(!saboMarker) saboMarker = L.circleMarker([sab.lat, sab.lng], {color: 'yellow', radius: 25}).addTo(map);
                 
-                // Update fixer count in DB voor spelers
-                db.ref('game_settings/sabotage/fix_count').set(fixersCount);
-
-                // Timer check
-                if(fixersCount >= 3) {
-                    if(!sab.start_time) db.ref('game_settings/sabotage/start_time').set(Date.now());
-                    let elapsed = Math.floor((Date.now() - sab.start_time) / 1000);
-                    monitor.innerHTML += `<div>REPARATIE BEZIG: ${elapsed}/60s</div>`;
-                    if(elapsed >= 60) db.ref('game_settings/sabotage').remove();
+                let fixers = 0;
+                for(let id in ps) {
+                    if(ps[id].state==='active' && ps[id].status==='alive' && dist(ps[id].lat, ps[id].lng, sab.lat, sab.lng) < 15) fixers++;
+                }
+                db.ref('game_settings/sabotage/fix_count').set(fixers);
+                if(fixers >= 3) {
+                    if(!sab.start_ts) db.ref('game_settings/sabotage/start_ts').set(Date.now());
+                    if(Date.now() - sab.start_ts > 60000) db.ref('game_settings/sabotage').remove();
                 } else {
-                    db.ref('game_settings/sabotage/start_time').remove();
+                    db.ref('game_settings/sabotage/start_ts').remove();
                 }
             } else {
-                monitor.innerHTML = "Systeem Normaal";
+                document.getElementById('sabo-status').style.display = 'none';
                 if(saboMarker) { map.removeLayer(saboMarker); saboMarker = null; }
             }
-
-            document.getElementById('leaderboard').innerHTML = scores.sort((a,b)=>b.pts-a.pts).map(s=>`<div>${s.name}: ${s.pts}</div>`).join('');
-            window.currentPlayers = ps; // Voor sabotage start
+            window.activeCoords = {lats, lngs};
         });
 
-        function startSabo() {
-            let lats = [], lngs = [];
-            for(let id in window.currentPlayers) {
-                let p = window.currentPlayers[id];
-                if(p.state==='active' && p.role!=='post') { lats.push(p.lat); lngs.push(p.lng); }
-            }
-            if(lats.length === 0) return alert("Geen spelers!");
-            db.ref('game_settings/sabotage').set({
-                active: true,
-                lat: lats.reduce((a,b)=>a+b)/lats.length,
-                lng: lngs.reduce((a,b)=>a+b)/lngs.length,
-                fix_count: 0
-            });
-        }
-
+        function approve(id, role) { db.ref('players/'+id).update({state: 'active', role: role, points: 0, status: 'alive'}); }
+        
         function assignRoles() {
             db.ref('players').once('value', s => {
                 let ids = [];
@@ -134,8 +121,16 @@
             });
         }
 
-        function sendAnn() { db.ref('game_settings/announcement').set({msg: document.getElementById('ann-msg').value, ts: Date.now()}); }
-        function approve(id, role) { db.ref('players/'+id).update({state: 'active', points: 0, status: 'alive', role: role}); }
+        function triggerSabo() {
+            if(!window.activeCoords.lats.length) return alert("Geen actieve spelers!");
+            db.ref('game_settings/sabotage').set({
+                active: true,
+                lat: window.activeCoords.lats.reduce((a,b)=>a+b)/window.activeCoords.lats.length,
+                lng: window.activeCoords.lngs.reduce((a,b)=>a+b)/window.activeCoords.lngs.length,
+                fix_count: 0
+            });
+        }
+
         function dist(la1, lo1, la2, lo2) {
             const R = 6371e3;
             const a = Math.sin(((la2-la1)*Math.PI/180)/2)**2 + Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(((lo2-lo1)*Math.PI/180)/2)**2;
