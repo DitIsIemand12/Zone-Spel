@@ -1,37 +1,52 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>SUNNYSIDE ADMIN - CONTROL</title>
+    <title>SUNNYSIDE - MASTER COMMAND</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
     <style>
-        body { margin: 0; background: #000; color: #0f0; font-family: monospace; display: flex; height: 100vh; }
+        body { margin: 0; background: #000; color: #0f0; font-family: monospace; display: flex; height: 100vh; overflow: hidden; }
         #map { flex-grow: 1; background: #111; }
-        #sidebar { width: 350px; background: #0a0a0a; border-left: 2px solid #0f0; padding: 15px; overflow-y: auto; }
-        .btn { background: #0f0; color: #000; border: none; padding: 10px; width: 100%; cursor: pointer; font-weight: bold; margin-bottom: 10px; }
-        .section { border: 1px solid #333; padding: 10px; margin-bottom: 15px; }
-        .player-row { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 12px; border-bottom: 1px solid #222; }
+        #sidebar { width: 350px; background: #0a0a0a; border-left: 2px solid #0f0; padding: 15px; overflow-y: auto; box-sizing: border-box; }
+        .btn { background: #0f0; color: #000; border: none; padding: 10px; width: 100%; cursor: pointer; font-weight: bold; margin-bottom: 10px; text-transform: uppercase; }
+        .section { border: 1px solid #333; padding: 10px; margin-bottom: 15px; background: #111; }
+        input { background: #222; color: #0f0; border: 1px solid #0f0; padding: 5px; width: calc(100% - 12px); margin-bottom: 5px; }
+        #danger-zone { display: none; margin-top: 10px; padding: 10px; border: 1px solid red; }
+        .player-row { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px; border-bottom: 1px solid #222; }
     </style>
 </head>
 <body>
     <div id="map"></div>
     <div id="sidebar">
-        <h2>CORE CONTROL</h2>
+        <h2 id="db-status" style="color:red">OFFLINE</h2>
+        
         <div class="section">
-            <h3>LOBBY & ROLLEN</h3>
-            Verraders: <input type="number" id="t-count" value="1" style="width:40px; background:#222; color:#0f0;">
-            <button class="btn" onclick="assignRoles()">VERDEEL ROLLEN & START</button>
+            <h3>📢 OMROEPEN</h3>
+            <input type="text" id="announcement-text" placeholder="Typ bericht voor iedereen...">
+            <button class="btn" style="background:orange" onclick="sendAnnouncement()">Verstuur Melding</button>
         </div>
+
         <div class="section">
-            <h3>SCOREBORD</h3>
-            <div id="leaderboard">Laden...</div>
+            <h3>🎮 GAME SETUP</h3>
+            Verraders: <input type="number" id="t-count" value="1" style="width:40px">
+            <button class="btn" onclick="assignRoles()">START GAME & ROLLEN</button>
         </div>
+
         <div class="section">
-            <h3>WACHTRIJ</h3>
+            <h3>🏆 SCOREBORD</h3>
+            <div id="leaderboard"></div>
+        </div>
+
+        <div class="section">
+            <h3>👥 WACHTRIJ</h3>
             <div id="queue-list"></div>
         </div>
-        <button class="btn" style="background:red; color:white;" onclick="db.ref().remove()">RESET ALLES</button>
+
+        <button onclick="toggleDanger()" style="background:none; color:red; border:none; cursor:pointer; font-size:10px;">[ Toon Gevaarlijke Instellingen ]</button>
+        <div id="danger-zone">
+            <button class="btn" style="background:red; color:white;" onclick="hardReset()">⚠️ VOLLEDIGE WIPE (RESET)</button>
+        </div>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -48,6 +63,12 @@
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
 
+        db.ref(".info/connected").on("value", s => {
+            const el = document.getElementById('db-status');
+            el.innerText = s.val() ? "SYSTEM ONLINE" : "SYSTEM OFFLINE";
+            el.style.color = s.val() ? "#0f0" : "red";
+        });
+
         const map = L.map('map').setView([52.3, 5.0], 13);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
         let markers = {};
@@ -55,30 +76,40 @@
         db.ref().on('value', snap => {
             const data = snap.val() || {};
             const ps = data.players || {};
-            const queueList = document.getElementById('queue-list');
-            const leaderboard = document.getElementById('leaderboard');
+            const qList = document.getElementById('queue-list');
+            const lBoard = document.getElementById('leaderboard');
             
-            queueList.innerHTML = "";
+            qList.innerHTML = "";
             let scores = [];
 
             for(let id in ps) {
                 const p = ps[id];
                 if(p.state === 'active') {
-                    scores.push({name: p.name, pts: p.points || 0});
+                    scores.push({id, name: p.name, pts: p.points || 0});
                     const col = p.status === 'dead' ? '#555' : (p.role === 'traitor' ? '#f0f' : '#0ff');
-                    if(markers[id]) markers[id].setLatLng([p.lat, p.lng]).setStyle({color: col, fillColor: col});
-                    else markers[id] = L.circleMarker([p.lat, p.lng], {color: col, radius: 10}).addTo(map).bindTooltip(p.name, {permanent:true});
+                    if(markers[id]) {
+                        markers[id].setLatLng([p.lat, p.lng]).setStyle({color: col, fillColor: col});
+                    } else {
+                        markers[id] = L.circleMarker([p.lat, p.lng], {color: col, radius: 8, fillOpacity: 0.8}).addTo(map).bindTooltip(p.name, {permanent:true});
+                    }
                 } else {
-                    queueList.innerHTML += `<div class="player-row">${p.name} <button onclick="approve('${id}')">Check-in</button></div>`;
+                    qList.innerHTML += `<div class="player-row">${p.name} <button onclick="approve('${id}')">TOELATEN</button></div>`;
                 }
             }
-            
             scores.sort((a,b) => b.pts - a.pts);
-            leaderboard.innerHTML = scores.map(s => `<div>${s.name}: ${s.pts} pnt</div>`).join('');
+            lBoard.innerHTML = scores.map(s => `<div>${s.name}: ${s.pts} pnt</div>`).join('');
         });
 
         function approve(id) { db.ref('players/'+id).update({state: 'active', points: 0, status: 'alive', role: 'toy'}); }
         
+        function sendAnnouncement() {
+            const msg = document.getElementById('announcement-text').value;
+            if(msg) {
+                db.ref('game_settings/announcement').set({ msg: msg, ts: Date.now() });
+                document.getElementById('announcement-text').value = "";
+            }
+        }
+
         function assignRoles() {
             db.ref('players').once('value', snap => {
                 let ids = [];
@@ -87,7 +118,20 @@
                 const count = document.getElementById('t-count').value;
                 ids.forEach((id, i) => db.ref('players/'+id).update({role: i < count ? 'traitor' : 'toy'}));
                 db.ref('game_settings').update({state: 'playing'});
+                alert("Game Gestart!");
             });
+        }
+
+        function toggleDanger() {
+            const dz = document.getElementById('danger-zone');
+            dz.style.display = dz.style.display === 'block' ? 'none' : 'block';
+        }
+
+        function hardReset() {
+            if(confirm("DIT WIST ALLES! Weet je het zeker?")) {
+                db.ref().remove();
+                location.reload();
+            }
         }
     </script>
 </body>
