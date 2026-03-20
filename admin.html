@@ -11,33 +11,28 @@
         #sidebar { width: 350px; background: #0a0a0a; border-left: 2px solid #0f0; padding: 15px; overflow-y: auto; }
         .btn { background: #0f0; color: #000; border: none; padding: 10px; width: 100%; cursor: pointer; font-weight: bold; margin-bottom: 10px; text-transform: uppercase; }
         .section { border: 1px solid #333; padding: 10px; margin-bottom: 15px; background: #111; }
-        .q-item { border-bottom: 1px solid #333; padding: 10px 0; display: flex; justify-content: space-between; align-items: center; }
+        .q-item, .p-row { border-bottom: 1px solid #333; padding: 5px 0; display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
         input, select { background: #000; color: #0f0; border: 1px solid #0f0; padding: 5px; margin-bottom: 5px; }
-        .clickable-name { cursor: pointer; text-decoration: underline; color: #0ff; }
-        #total-score { font-size: 18px; color: yellow; margin-bottom: 10px; }
+        #game-status-box { font-size: 18px; font-weight: bold; padding: 10px; text-align: center; border: 2px solid #0f0; margin-bottom: 10px; }
+        .sabo-warn { background: red; color: white; border-color: white; }
     </style>
 </head>
 <body>
     <div id="map"></div>
     <div id="sidebar">
-        <h2>MASTER CONTROL</h2>
+        <div id="game-status-box">STATUS: LOBBY</div>
         
         <div class="section">
             <h3>📢 OMROEPEN</h3>
             <select id="ann-target" style="width:100%">
                 <option value="all">Iedereen</option>
-                <option value="player">Alle Spelers (Toys + Traitors)</option>
-                <option value="toy">Alleen Toys</option>
-                <option value="traitor">Alleen Verraders</option>
-                <option value="post">Alleen Posten</option>
+                <option value="player">Toys + Traitors</option>
+                <option value="toy">Toys</option>
+                <option value="traitor">Traitors</option>
+                <option value="post">Posten</option>
             </select>
             <input type="text" id="ann-msg" style="width:70%" placeholder="Typ bericht...">
             <button class="btn" style="width:25%; display:inline;" onclick="sendAnn()">OK</button>
-        </div>
-
-        <div class="section">
-            <div id="total-score">Totaal Toys: 0</div>
-            Kill Beloning: <input type="number" id="kill-val" value="50" onchange="updateKillVal(this.value)">
         </div>
 
         <div class="section">
@@ -46,12 +41,17 @@
         </div>
 
         <div class="section">
+            <h3>ACTIEVE POSTEN</h3>
+            <div id="posts-list">Geen posten...</div>
+        </div>
+
+        <div class="section">
             <h3>SCOREBORD (Klik naam)</h3>
             <div id="leaderboard"></div>
         </div>
 
         <button class="btn" onclick="startGame()">START GAME & ROLLEN</button>
-        <button class="btn" style="background:red" onclick="triggerSabo()">SABOTAGE</button>
+        <button class="btn" style="background:red" onclick="triggerSabo()">FORCEER SABOTAGE</button>
         <button class="btn" style="background:#222; color:#555" onclick="if(confirm('WIPE?')) db.ref().remove();">RESET GAME</button>
     </div>
 
@@ -77,27 +77,40 @@
             const data = snap.val() || {};
             const ps = data.players || {};
             const qList = document.getElementById('queue-list');
+            const pList = document.getElementById('posts-list');
             const lBoard = document.getElementById('leaderboard');
+            const statusBox = document.getElementById('game-status-box');
             
-            qList.innerHTML = ""; lBoard.innerHTML = "";
+            qList.innerHTML = ""; pList.innerHTML = ""; lBoard.innerHTML = "";
             let lats = [], lngs = [], totalToyPoints = 0;
+
+            // Status indicator
+            if(data.game_settings?.sabotage?.active) {
+                statusBox.innerText = "STATUS: SABOTAGE ACTIEF!";
+                statusBox.className = "sabo-warn";
+            } else if(data.game_settings?.state === 'playing') {
+                statusBox.innerText = "STATUS: SPEL BEZIG";
+                statusBox.className = "";
+            } else {
+                statusBox.innerText = "STATUS: LOBBY";
+                statusBox.className = "";
+            }
 
             for(let id in ps) {
                 const p = ps[id];
                 if(p.state === 'pending') {
                     qList.innerHTML += `<div class="q-item">${p.name} (${p.role}) <button onclick="approve('${id}')">OK</button></div>`;
                 } else {
-                    if(p.role !== 'post') {
+                    if(p.role === 'post') {
+                        pList.innerHTML += `<div class="p-row">${p.name} <button onclick="db.ref('players/${id}').remove()">X</button></div>`;
+                    } else {
                         if(p.role === 'toy') totalToyPoints += (p.points || 0);
-                        lBoard.innerHTML += `<div><span class="clickable-name" onclick="editPoints('${id}', ${p.points || 0})">${p.name}</span>: ${p.points || 0} (${p.role})</div>`;
+                        lBoard.innerHTML += `<div><span style="cursor:pointer; color:#0ff;" onclick="editPoints('${id}', ${p.points || 0})">${p.name}</span>: ${p.points || 0} (${p.role})</div>`;
                         lats.push(p.lat); lngs.push(p.lng);
                     }
                     
-                    let col = '#0f0'; // Toy = Groen
-                    if(p.role === 'traitor') col = '#f0f'; // Traitor = Roze
-                    if(p.role === 'post') col = '#ff0'; // Post = Geel
-                    if(p.status === 'dead') col = '#555';
-
+                    let col = p.role==='traitor' ? '#f0f' : (p.role==='post' ? '#ff0' : '#0f0');
+                    if(p.status==='dead') col='#555';
                     if(markers[id]) {
                         markers[id].setLatLng([p.lat, p.lng]).setStyle({color: col, fillColor: col});
                     } else {
@@ -105,13 +118,12 @@
                     }
                 }
             }
-            document.getElementById('total-score').innerText = "Totaal Toys: " + totalToyPoints;
             window.coords = {lats, lngs};
         });
 
         function approve(id) { db.ref('players/'+id).update({state: 'active'}); }
         function editPoints(id, current) {
-            const nieuw = prompt("Score voor " + id + ":", current);
+            const nieuw = prompt("Pas score aan voor " + id + ":", current);
             if(nieuw !== null) db.ref('players/'+id+'/points').set(parseInt(nieuw));
         }
         function sendAnn() { 
@@ -119,7 +131,6 @@
             const target = document.getElementById('ann-target').value;
             db.ref('game_settings/announcement').set({ msg, target, ts: Date.now() }); 
         }
-        function updateKillVal(val) { db.ref('game_settings/kill_reward').set(parseInt(val)); }
         function startGame() {
             db.ref('players').once('value', s => {
                 let ids = [];
