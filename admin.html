@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>SUNNYSIDE - MASTER COMMAND</title>
+    <title>SUNNYSIDE MASTER CONTROL</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
@@ -12,41 +12,41 @@
         .btn { background: #0f0; color: #000; border: none; padding: 10px; width: 100%; cursor: pointer; font-weight: bold; margin-bottom: 10px; text-transform: uppercase; }
         .section { border: 1px solid #333; padding: 10px; margin-bottom: 15px; background: #111; }
         input { background: #222; color: #0f0; border: 1px solid #0f0; padding: 5px; width: calc(100% - 12px); margin-bottom: 5px; }
-        #danger-zone { display: none; margin-top: 10px; padding: 10px; border: 1px solid red; }
-        .player-row { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px; border-bottom: 1px solid #222; }
+        .sabo-active { background: #500; border: 1px solid red; padding: 10px; animation: blink 1s infinite; }
+        @keyframes blink { 50% { opacity: 0.5; } }
     </style>
 </head>
 <body>
     <div id="map"></div>
     <div id="sidebar">
-        <h2 id="db-status" style="color:red">OFFLINE</h2>
+        <h2 id="db-status">VERBINDEN...</h2>
         
+        <div id="sabotage-status"></div>
+
         <div class="section">
             <h3>📢 OMROEPEN</h3>
-            <input type="text" id="announcement-text" placeholder="Typ bericht voor iedereen...">
-            <button class="btn" style="background:orange" onclick="sendAnnouncement()">Verstuur Melding</button>
+            <input type="text" id="ann-text" placeholder="Bericht voor iedereen...">
+            <button class="btn" onclick="sendAnn()">VERSTUUR</button>
         </div>
 
         <div class="section">
-            <h3>🎮 GAME SETUP</h3>
+            <h3>🎮 GAME CONTROL</h3>
             Verraders: <input type="number" id="t-count" value="1" style="width:40px">
-            <button class="btn" onclick="assignRoles()">START GAME & ROLLEN</button>
+            <button class="btn" onclick="assignRoles()">VERDEEL ROLLEN & START</button>
+            <button class="btn" style="background:red" onclick="triggerSabo()">FORCEER SABOTAGE</button>
         </div>
 
         <div class="section">
-            <h3>🏆 SCOREBORD</h3>
-            <div id="leaderboard"></div>
+            <h3>🏆 LIVE SCORE</h3>
+            <div id="l-board"></div>
         </div>
 
         <div class="section">
             <h3>👥 WACHTRIJ</h3>
-            <div id="queue-list"></div>
+            <div id="q-list"></div>
         </div>
 
-        <button onclick="toggleDanger()" style="background:none; color:red; border:none; cursor:pointer; font-size:10px;">[ Toon Gevaarlijke Instellingen ]</button>
-        <div id="danger-zone">
-            <button class="btn" style="background:red; color:white;" onclick="hardReset()">⚠️ VOLLEDIGE WIPE (RESET)</button>
-        </div>
+        <button class="btn" style="background: #333; color: #999" onclick="if(confirm('WIPE?')) db.ref().remove()">RESET DATABASE</button>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -63,75 +63,67 @@
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
 
-        db.ref(".info/connected").on("value", s => {
-            const el = document.getElementById('db-status');
-            el.innerText = s.val() ? "SYSTEM ONLINE" : "SYSTEM OFFLINE";
-            el.style.color = s.val() ? "#0f0" : "red";
-        });
-
         const map = L.map('map').setView([52.3, 5.0], 13);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
         let markers = {};
+        let saboMarker = null;
 
         db.ref().on('value', snap => {
             const data = snap.val() || {};
             const ps = data.players || {};
-            const qList = document.getElementById('queue-list');
-            const lBoard = document.getElementById('leaderboard');
             
-            qList.innerHTML = "";
-            let scores = [];
+            // Render spelers
+            const qList = document.getElementById('q-list');
+            const lBoard = document.getElementById('l-board');
+            qList.innerHTML = ""; let scores = [];
 
             for(let id in ps) {
                 const p = ps[id];
                 if(p.state === 'active') {
-                    scores.push({id, name: p.name, pts: p.points || 0});
-                    const col = p.status === 'dead' ? '#555' : (p.role === 'traitor' ? '#f0f' : '#0ff');
-                    if(markers[id]) {
-                        markers[id].setLatLng([p.lat, p.lng]).setStyle({color: col, fillColor: col});
-                    } else {
-                        markers[id] = L.circleMarker([p.lat, p.lng], {color: col, radius: 8, fillOpacity: 0.8}).addTo(map).bindTooltip(p.name, {permanent:true});
-                    }
+                    if(p.role !== 'post') scores.push({name: p.name, pts: p.points || 0});
+                    let col = p.role==='traitor' ? '#f0f' : (p.role==='post' ? '#ffa500' : '#0ff');
+                    if(p.status === 'dead') col = '#555';
+                    if(markers[id]) markers[id].setLatLng([p.lat, p.lng]).setStyle({color: col, fillColor: col});
+                    else markers[id] = L.circleMarker([p.lat, p.lng], {color: col, radius: 8, fillOpacity: 0.8}).addTo(map).bindTooltip(p.name, {permanent:true});
                 } else {
-                    qList.innerHTML += `<div class="player-row">${p.name} <button onclick="approve('${id}')">TOELATEN</button></div>`;
+                    qList.innerHTML += `<div>${p.name} <button onclick="approve('${id}','toy')">Speler</button><button onclick="approve('${id}','post')">Post</button></div>`;
                 }
             }
-            scores.sort((a,b) => b.pts - a.pts);
-            lBoard.innerHTML = scores.map(s => `<div>${s.name}: ${s.pts} pnt</div>`).join('');
+            lBoard.innerHTML = scores.sort((a,b)=>b.pts-a.pts).map(s=>`<div>${s.name}: ${s.pts}</div>`).join('');
+
+            // Sabotage monitoring
+            const sab = data.game_settings?.sabotage;
+            const sabStatus = document.getElementById('sabotage-status');
+            if(sab?.active) {
+                sabStatus.innerHTML = `<div class="sabo-active">SABOTAGE: LIGHTS OUT<br>Fixers aanwezig: ${sab.fix_count || 0}/3</div>`;
+                if(!saboMarker) saboMarker = L.circleMarker([sab.lat, sab.lng], {color: 'yellow', radius: 20, dashArray: '5, 10'}).addTo(map).bindTooltip("FIX POINT", {permanent:true});
+            } else {
+                sabStatus.innerHTML = "";
+                if(saboMarker) { map.removeLayer(saboMarker); saboMarker = null; }
+            }
         });
 
-        function approve(id) { db.ref('players/'+id).update({state: 'active', points: 0, status: 'alive', role: 'toy'}); }
-        
-        function sendAnnouncement() {
-            const msg = document.getElementById('announcement-text').value;
-            if(msg) {
-                db.ref('game_settings/announcement').set({ msg: msg, ts: Date.now() });
-                document.getElementById('announcement-text').value = "";
-            }
+        function approve(id, role) { db.ref('players/'+id).update({state: 'active', points: 0, status: 'alive', role: role}); }
+        function sendAnn() { db.ref('game_settings/announcement').set({ msg: document.getElementById('ann-text').value, ts: Date.now() }); }
+
+        function triggerSabo() {
+            db.ref('players').once('value', s => {
+                let lats = [], lngs = [];
+                s.forEach(p => { if(p.val().state === 'active' && p.val().role !== 'post') { lats.push(p.val().lat); lngs.push(p.val().lng); }});
+                const midLat = lats.reduce((a,b)=>a+b)/lats.length;
+                const midLng = lngs.reduce((a,b)=>a+b)/lngs.length;
+                db.ref('game_settings/sabotage').set({ active: true, type: 'lights', lat: midLat, lng: midLng, fix_count: 0, start_ts: Date.now() });
+            });
         }
 
         function assignRoles() {
             db.ref('players').once('value', snap => {
                 let ids = [];
-                snap.forEach(c => { if(c.val().state === 'active') ids.push(c.key); });
+                snap.forEach(c => { if(c.val().state === 'active' && c.val().role !== 'post') ids.push(c.key); });
                 ids.sort(() => Math.random() - 0.5);
-                const count = document.getElementById('t-count').value;
-                ids.forEach((id, i) => db.ref('players/'+id).update({role: i < count ? 'traitor' : 'toy'}));
-                db.ref('game_settings').update({state: 'playing'});
-                alert("Game Gestart!");
+                ids.forEach((id, i) => db.ref('players/'+id).update({role: i < document.getElementById('t-count').value ? 'traitor' : 'toy'}));
+                db.ref('game_settings/state').set('playing');
             });
-        }
-
-        function toggleDanger() {
-            const dz = document.getElementById('danger-zone');
-            dz.style.display = dz.style.display === 'block' ? 'none' : 'block';
-        }
-
-        function hardReset() {
-            if(confirm("DIT WIST ALLES! Weet je het zeker?")) {
-                db.ref().remove();
-                location.reload();
-            }
         }
     </script>
 </body>
