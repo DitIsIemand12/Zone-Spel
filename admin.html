@@ -1,48 +1,37 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>SUNNYSIDE ADMIN - LOBBY</title>
+    <title>SUNNYSIDE ADMIN - CONTROL</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
     <style>
         body { margin: 0; background: #000; color: #0f0; font-family: monospace; display: flex; height: 100vh; }
         #map { flex-grow: 1; background: #111; }
-        #sidebar { width: 350px; background: #0a0a0a; border-left: 2px solid #0f0; padding: 15px; overflow-y: auto; box-sizing: border-box; }
-        .btn { background: #0f0; color: #000; border: none; padding: 10px; width: 100%; cursor: pointer; font-weight: bold; margin-bottom: 10px; text-transform: uppercase; }
-        .btn-red { background: #f00; color: #fff; }
-        .btn-blue { background: #00f; color: #fff; }
+        #sidebar { width: 350px; background: #0a0a0a; border-left: 2px solid #0f0; padding: 15px; overflow-y: auto; }
+        .btn { background: #0f0; color: #000; border: none; padding: 10px; width: 100%; cursor: pointer; font-weight: bold; margin-bottom: 10px; }
         .section { border: 1px solid #333; padding: 10px; margin-bottom: 15px; }
-        .player-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; font-size: 12px; border-bottom: 1px solid #222; padding-bottom: 3px; }
-        .tag { font-size: 9px; padding: 2px 4px; border-radius: 3px; }
-        .tag-pending { background: orange; color: black; }
-        .tag-toy { background: cyan; color: black; }
-        .tag-traitor { background: magenta; color: white; }
+        .player-row { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 12px; border-bottom: 1px solid #222; }
     </style>
 </head>
 <body>
     <div id="map"></div>
     <div id="sidebar">
-        <h2 id="status-indicator">SYSTEM IDLE</h2>
-        
+        <h2>CORE CONTROL</h2>
         <div class="section">
-            <h3>INSTELLINGEN</h3>
-            Aantal Verraders: <input type="number" id="traitor-count" value="1" style="width: 40px; background: #222; color: #0f0; border: 1px solid #0f0;"><br><br>
-            <button class="btn btn-blue" onclick="startGame()">🚀 START GAME</button>
-            <button class="btn" onclick="assignRolesRandomly()">🎲 VERDEEL ROLLEN NU</button>
+            <h3>LOBBY & ROLLEN</h3>
+            Verraders: <input type="number" id="t-count" value="1" style="width:40px; background:#222; color:#0f0;">
+            <button class="btn" onclick="assignRoles()">VERDEEL ROLLEN & START</button>
         </div>
-
         <div class="section">
-            <h3>WACHTRIJ (PENDING)</h3>
-            <div id="queue-list">Geen aanmeldingen...</div>
+            <h3>SCOREBORD</h3>
+            <div id="leaderboard">Laden...</div>
         </div>
-
         <div class="section">
-            <h3>ACTIEVE SPELERS</h3>
-            <div id="active-list">Geen spelers in game...</div>
+            <h3>WACHTRIJ</h3>
+            <div id="queue-list"></div>
         </div>
-
-        <button class="btn btn-red" onclick="hardReset()">⚠️ RESET ALLES</button>
+        <button class="btn" style="background:red; color:white;" onclick="db.ref().remove()">RESET ALLES</button>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -61,94 +50,44 @@
 
         const map = L.map('map').setView([52.3, 5.0], 13);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
-
         let markers = {};
-        let tMarkers = [];
 
-        // Taken toevoegen op klik
-        map.on('click', e => {
-            const n = prompt("Naam van de opdracht:");
-            if(n) db.ref('tasks').push({ name: n, lat: e.latlng.lat, lng: e.latlng.lng });
-        });
-
-        // Hoofd-lus
         db.ref().on('value', snap => {
             const data = snap.val() || {};
             const ps = data.players || {};
             const queueList = document.getElementById('queue-list');
-            const activeList = document.getElementById('active-list');
+            const leaderboard = document.getElementById('leaderboard');
             
             queueList.innerHTML = "";
-            activeList.innerHTML = "";
+            let scores = [];
 
             for(let id in ps) {
                 const p = ps[id];
-                const col = p.status === 'dead' ? '#555' : (p.role === 'traitor' ? '#f0f' : '#0ff');
-                
-                // Beheer Kaart Markers
                 if(p.state === 'active') {
-                    if(markers[id]) {
-                        markers[id].setLatLng([p.lat, p.lng]).setStyle({color: col, fillColor: col});
-                    } else {
-                        markers[id] = L.circleMarker([p.lat, p.lng], {color: col, fillOpacity: 0.8, radius: 10}).addTo(map).bindTooltip(p.name, {permanent:true});
-                    }
-
-                    activeList.innerHTML += `
-                        <div class="player-row">
-                            <span>${p.name} <b style="color:${col}">(${p.role})</b></span>
-                            <button onclick="toggleRole('${id}', '${p.role}')">Switch</button>
-                            <button onclick="kickPlayer('${id}')">X</button>
-                        </div>`;
+                    scores.push({name: p.name, pts: p.points || 0});
+                    const col = p.status === 'dead' ? '#555' : (p.role === 'traitor' ? '#f0f' : '#0ff');
+                    if(markers[id]) markers[id].setLatLng([p.lat, p.lng]).setStyle({color: col, fillColor: col});
+                    else markers[id] = L.circleMarker([p.lat, p.lng], {color: col, radius: 10}).addTo(map).bindTooltip(p.name, {permanent:true});
                 } else {
-                    queueList.innerHTML += `
-                        <div class="player-row">
-                            <span>${p.name}</span>
-                            <button onclick="approvePlayer('${id}')">Toelaten</button>
-                        </div>`;
+                    queueList.innerHTML += `<div class="player-row">${p.name} <button onclick="approve('${id}')">Check-in</button></div>`;
                 }
             }
-
-            // Taken
-            tMarkers.forEach(m => map.removeLayer(m)); tMarkers = [];
-            const ts = data.tasks || {};
-            for(let tid in ts) {
-                const t = ts[tid];
-                const tm = L.circleMarker([t.lat, t.lng], {radius:5, color:'yellow'}).addTo(map).bindTooltip(t.name);
-                tMarkers.push(tm);
-            }
+            
+            scores.sort((a,b) => b.pts - a.pts);
+            leaderboard.innerHTML = scores.map(s => `<div>${s.name}: ${s.pts} pnt</div>`).join('');
         });
 
-        function approvePlayer(id) { db.ref('players/'+id).update({state: 'active', role: 'toy', status: 'alive'}); }
-        function kickPlayer(id) { db.ref('players/'+id).remove(); if(markers[id]) map.removeLayer(markers[id]); delete markers[id]; }
+        function approve(id) { db.ref('players/'+id).update({state: 'active', points: 0, status: 'alive', role: 'toy'}); }
         
-        function toggleRole(id, current) {
-            const newRole = current === 'traitor' ? 'toy' : 'traitor';
-            db.ref('players/'+id).update({role: newRole});
-        }
-
-        function assignRolesRandomly() {
+        function assignRoles() {
             db.ref('players').once('value', snap => {
-                let activePlayers = [];
-                snap.forEach(c => { if(c.val().state === 'active') activePlayers.push(c.key); });
-                
-                const count = document.getElementById('traitor-count').value;
-                // Shuffle en verdeel
-                activePlayers.sort(() => Math.random() - 0.5);
-                activePlayers.forEach((id, index) => {
-                    const role = index < count ? 'traitor' : 'toy';
-                    db.ref('players/'+id).update({role: role});
-                });
-                alert("Rollen verdeeld!");
+                let ids = [];
+                snap.forEach(c => { if(c.val().state === 'active') ids.push(c.key); });
+                ids.sort(() => Math.random() - 0.5);
+                const count = document.getElementById('t-count').value;
+                ids.forEach((id, i) => db.ref('players/'+id).update({role: i < count ? 'traitor' : 'toy'}));
+                db.ref('game_settings').update({state: 'playing'});
             });
-        }
-
-        function startGame() {
-            db.ref('game_settings').update({state: 'playing'});
-            alert("SPEL IS GESTART!");
-        }
-
-        function hardReset() {
-            if(confirm("Wis alles?")) db.ref().remove();
         }
     </script>
 </body>
